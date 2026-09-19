@@ -15,6 +15,8 @@ describe("Configuration", () => {
     expect(config.haToken).toBe("");
     expect(config.addonUrl).toBe("http://localhost:8099");
     expect(config.addonKey).toBe("");
+    expect(config.agentKey).toBe("");
+    expect(config.agentId).toBe("");
     expect(config.browserStateDir).toBeDefined();
     expect(config.browserStateDir).toContain(".ha-ai");
   });
@@ -25,6 +27,8 @@ describe("Configuration", () => {
       HA_TOKEN: "custom-token-xyz",
       ADDON_URL: "http://homeassistant.local:8099///",
       ADDON_KEY: "secret-addon-key-123",
+      AGENT_KEY: "sec_agent_custom_456",
+      AGENT_ID: "agent_orchestrator",
       BROWSER_STATE_DIR: "/tmp/custom-ha-ai",
     };
     const config = loadConfig(customEnv);
@@ -32,6 +36,8 @@ describe("Configuration", () => {
     expect(config.haToken).toBe("custom-token-xyz");
     expect(config.addonUrl).toBe("http://homeassistant.local:8099");
     expect(config.addonKey).toBe("secret-addon-key-123");
+    expect(config.agentKey).toBe("sec_agent_custom_456");
+    expect(config.agentId).toBe("agent_orchestrator");
     expect(config.browserStateDir).toBe("/tmp/custom-ha-ai");
   });
 });
@@ -159,12 +165,15 @@ describe("AddonClient", () => {
   let serverUrl: string;
   let lastHeaders: http.IncomingHttpHeaders;
   let lastRequestBody: any;
+  let lastReqUrl: string | undefined;
 
   beforeEach(async () => {
     lastHeaders = {};
     lastRequestBody = null;
+    lastReqUrl = undefined;
     server = http.createServer(async (req, res) => {
       lastHeaders = req.headers;
+      lastReqUrl = req.url;
       const chunks: Buffer[] = [];
       for await (const chunk of req) {
         chunks.push(chunk);
@@ -177,7 +186,10 @@ describe("AddonClient", () => {
         }
       }
 
-      if (req.headers["x-addon-api-key"] !== "test-addon-key") {
+      if (
+        req.headers["x-addon-api-key"] !== "test-addon-key" &&
+        req.headers["x-addon-api-key"] !== "test-agent-key"
+      ) {
         res.writeHead(401, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ detail: "Invalid or missing X-Addon-API-Key header" }));
         return;
@@ -273,6 +285,94 @@ describe("AddonClient", () => {
         return;
       }
 
+      if (req.url?.startsWith("/api/v1/audit/logs") && req.method === "GET") {
+        const parsedUrl = new URL(req.url, "http://127.0.0.1");
+        if (parsedUrl.searchParams.get("role") === "forbidden_role") {
+          res.writeHead(403, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ detail: { error: "ForbiddenByPolicy", message: "Role forbidden" } }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            total_events: 1,
+            events: [
+              {
+                id: "aud_123456789abc",
+                timestamp: "2026-09-19T12:00:00Z",
+                agent_id: parsedUrl.searchParams.get("agent_id") || "agent_designer",
+                role: "dashboard_designer",
+                action: "file_write",
+                tool: "ha_dashboard_save_config",
+                target: "ui-lovelace.yaml",
+                status: "allowed",
+                reason: "Allowed by role",
+                rationale: req.headers["x-agent-rationale"] || "Update cards",
+                client_ip: "127.0.0.1",
+              },
+            ],
+          })
+        );
+        return;
+      }
+
+      if (req.url === "/api/v1/agent/token" && req.method === "POST") {
+        if (lastRequestBody?.role === "invalid_role") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ detail: "Role 'invalid_role' is not defined in policies" }));
+          return;
+        }
+        if (lastRequestBody?.agent_id === "forbidden_agent") {
+          res.writeHead(403, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ detail: { error: "ForbiddenByPolicy", message: "Only admin can issue tokens" } }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            agent_id: lastRequestBody?.agent_id,
+            role: lastRequestBody?.role,
+            token: "sec_agent_ephem_abc123456789",
+            expires_at: "2026-09-19T13:00:00Z",
+          })
+        );
+        return;
+      }
+
+      if (req.url === "/api/v1/agent/policies" && req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            roles: {
+              admin: {
+                description: "Full admin access",
+                allow_tools: ["*"],
+                deny_tools: [],
+                allow_paths: ["**"],
+                deny_paths: [],
+                read_only_paths: [],
+                allow_services: ["*"],
+                deny_services: [],
+              },
+              guest: {
+                description: "Read-only access",
+                allow_tools: ["ha_system_health"],
+                deny_tools: [],
+                allow_paths: [],
+                deny_paths: [],
+                read_only_paths: ["**"],
+                allow_services: [],
+                deny_services: ["*"],
+              },
+            },
+            agents: {
+              designer_bot: { role: "dashboard_designer", description: "UI designer" },
+            },
+          })
+        );
+        return;
+      }
+
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ detail: "Not found" }));
     });
@@ -296,6 +396,17 @@ describe("AddonClient", () => {
     expect(lastHeaders["x-addon-api-key"]).toBe("test-addon-key");
   });
 
+  it("should prefer agentKey when provided in options", async () => {
+    const client = new AddonClient({
+      addonUrl: serverUrl,
+      addonKey: "fallback-key",
+      agentKey: "test-agent-key",
+    });
+    const health = await client.checkHealth();
+    expect(health.status).toBe("ok");
+    expect(lastHeaders["x-addon-api-key"]).toBe("test-agent-key");
+  });
+
   it("should fail when API key is invalid", async () => {
     const client = new AddonClient({ addonUrl: serverUrl, addonKey: "wrong-key" });
     await expect(client.checkHealth()).rejects.toThrow(/401|Invalid or missing/i);
@@ -309,11 +420,12 @@ describe("AddonClient", () => {
     expect(lastRequestBody).toEqual({ path: "configuration.yaml" });
   });
 
-  it("should write file content with optional yaml validation and label", async () => {
+  it("should write file content with optional yaml validation, label, and rationale header", async () => {
     const client = new AddonClient({ addonUrl: serverUrl, addonKey: "test-addon-key" });
     const result = await client.writeFile("configuration.yaml", "default_config:\nsun:\n", {
       validateYaml: true,
       label: "add sun component",
+      rationale: "Automated configuration update",
     });
     expect(result.success).toBe(true);
     expect(result.snapshot_id).toBe("snap_20260831_123456_configuration_yaml");
@@ -323,6 +435,7 @@ describe("AddonClient", () => {
       validate_yaml: true,
       label: "add sun component",
     });
+    expect(lastHeaders["x-agent-rationale"]).toBe("Automated configuration update");
   });
 
   it("should fail write file when YAML is invalid", async () => {
@@ -354,6 +467,72 @@ describe("AddonClient", () => {
     const logs = await client.getLogs(50);
     expect(logs.count).toBe(2);
     expect(logs.lines[0]).toContain("Home Assistant started");
+  });
+
+  it("should query audit logs with filters and rationale header", async () => {
+    const client = new AddonClient({ addonUrl: serverUrl, addonKey: "test-addon-key" });
+    const res = await client.getAuditLogs({
+      agent_id: "bot_1",
+      role: "admin",
+      status: "allowed",
+      limit: 10,
+      since: "2026-09-19T00:00:00Z",
+      rationale: "Audit inspection by lead admin",
+    });
+    expect(res.total_events).toBe(1);
+    expect(res.events[0].id).toBe("aud_123456789abc");
+    expect(res.events[0].agent_id).toBe("bot_1");
+    expect(res.events[0].client_ip).toBe("127.0.0.1");
+    expect(lastHeaders["x-agent-rationale"]).toBe("Audit inspection by lead admin");
+    expect(lastReqUrl).toContain("agent_id=bot_1");
+    expect(lastReqUrl).toContain("role=admin");
+    expect(lastReqUrl).toContain("status=allowed");
+    expect(lastReqUrl).toContain("limit=10");
+    expect(lastReqUrl).toContain("since=2026-09-19T00:00:00Z");
+  });
+
+  it("should throw ClientError on forbidden audit log query", async () => {
+    const client = new AddonClient({ addonUrl: serverUrl, addonKey: "test-addon-key" });
+    await expect(client.getAuditLogs({ role: "forbidden_role" })).rejects.toThrow(
+      /Addon getAuditLogs failed/i
+    );
+  });
+
+  it("should issue agent ephemeral token with rationale header", async () => {
+    const client = new AddonClient({ addonUrl: serverUrl, addonKey: "test-addon-key" });
+    const res = await client.issueAgentToken({
+      agent_id: "designer_bot",
+      role: "dashboard_designer",
+      ttl_minutes: 30,
+      rationale: "Spawn ephemeral worker",
+    });
+    expect(res.agent_id).toBe("designer_bot");
+    expect(res.role).toBe("dashboard_designer");
+    expect(res.token).toBe("sec_agent_ephem_abc123456789");
+    expect(lastRequestBody).toEqual({
+      agent_id: "designer_bot",
+      role: "dashboard_designer",
+      ttl_minutes: 30,
+    });
+    expect(lastHeaders["x-agent-rationale"]).toBe("Spawn ephemeral worker");
+  });
+
+  it("should throw ClientError on failed agent token issuance", async () => {
+    const client = new AddonClient({ addonUrl: serverUrl, addonKey: "test-addon-key" });
+    await expect(
+      client.issueAgentToken({ agent_id: "test", role: "invalid_role" })
+    ).rejects.toThrow(/Addon issueAgentToken failed/i);
+  });
+
+  it("should get agent policies and roles configuration", async () => {
+    const client = new AddonClient({ addonUrl: serverUrl, addonKey: "test-addon-key" });
+    const policies = await client.getAgentPolicies();
+    expect(policies.roles).toBeDefined();
+    expect(policies.roles.admin.allow_tools).toEqual(["*"]);
+    expect(policies.roles.admin.allow_paths).toEqual(["**"]);
+    expect(policies.roles.admin.allow_services).toEqual(["*"]);
+    expect(policies.roles.guest.read_only_paths).toEqual(["**"]);
+    expect(policies.agents.designer_bot.role).toBe("dashboard_designer");
   });
 });
 
