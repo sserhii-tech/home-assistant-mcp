@@ -1,5 +1,6 @@
 """Role-Based Access Control (RBAC) policy engine and configuration loader."""
 
+import fnmatch
 import hmac
 import logging
 from pathlib import Path
@@ -109,6 +110,13 @@ class PolicyConfig(BaseModel):
             return {}
         return v
 
+
+def _match_pattern(pattern: str, target: str) -> bool:
+    if pattern == "*" or pattern == "**":
+        return True
+    return fnmatch.fnmatchcase(target.lower(), pattern.lower())
+
+
 class PolicyEngine:
     def __init__(self, config_dir: Path | str, master_api_key: str | None = None):
         self.config_dir = Path(config_dir)
@@ -194,4 +202,23 @@ class PolicyEngine:
                 return (agent_id, agent.role)
 
         return (None, None)
+
+    def check_tool_permission(self, role: str, tool_name: str) -> tuple[bool, str]:
+        config = self.load_policies()
+        role_def = config.roles.get(role)
+        if not role_def:
+            return (False, f"Unknown role: '{role}'")
+
+        # 1. Deny rules take precedence
+        for pattern in role_def.deny_tools:
+            if _match_pattern(pattern, tool_name):
+                return (False, f"Tool '{tool_name}' explicitly denied for role '{role}'")
+
+        # 2. Allow rules
+        for pattern in role_def.allow_tools:
+            if _match_pattern(pattern, tool_name):
+                return (True, "Allowed by policy")
+
+        return (False, f"Tool '{tool_name}' not permitted for role '{role}'")
+
 

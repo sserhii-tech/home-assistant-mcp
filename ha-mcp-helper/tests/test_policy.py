@@ -198,3 +198,49 @@ def test_resolve_principal_no_master_key(tmp_path: Path):
     assert engine.resolve_principal("any_token") == (None, None)
 
 
+def test_check_tool_permission_admin_allows_all(tmp_path: Path):
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+    allowed, reason = engine.check_tool_permission("admin", "ha_system_call_service")
+    assert allowed is True
+    assert "allowed" in reason.lower()
+
+
+def test_check_tool_permission_glob_and_deny_precedence(tmp_path: Path):
+    custom_yaml = """
+version: "1.0"
+roles:
+  designer:
+    description: "Designer"
+    allow_tools:
+      - "ha_dashboard_*"
+      - "ha_system_list_entities"
+    deny_tools:
+      - "ha_dashboard_delete_*"
+      - "ha_automation_*"
+"""
+    (tmp_path / "ha_ai_policies.yaml").write_text(custom_yaml, encoding="utf-8")
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+
+    # Allowed by glob
+    allowed, _ = engine.check_tool_permission("designer", "ha_dashboard_save_config")
+    assert allowed is True
+
+    # Denied by explicit deny rule (takes precedence over allow glob)
+    denied, reason = engine.check_tool_permission("designer", "ha_dashboard_delete_view")
+    assert denied is False
+    assert "explicitly denied" in reason.lower()
+
+    # Denied because not in allow list
+    blocked, reason = engine.check_tool_permission("designer", "ha_system_call_service")
+    assert blocked is False
+    assert "not permitted" in reason.lower()
+
+
+def test_check_tool_permission_unknown_role(tmp_path: Path):
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+    allowed, reason = engine.check_tool_permission("non_existent_role", "ha_system_health")
+    assert allowed is False
+    assert "unknown role" in reason.lower()
+
+
+
