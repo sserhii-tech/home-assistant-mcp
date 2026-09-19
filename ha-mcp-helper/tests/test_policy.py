@@ -243,4 +243,151 @@ def test_check_tool_permission_unknown_role(tmp_path: Path):
     assert "unknown role" in reason.lower()
 
 
+def test_check_path_permission_globs_and_readonly(tmp_path: Path):
+    custom_yaml = """
+version: "1.0"
+roles:
+  designer:
+    description: "Designer"
+    allow_paths:
+      - "dashboards/**"
+      - "ui-lovelace.yaml"
+    deny_paths:
+      - "dashboards/private/**"
+    read_only_paths:
+      - "ui-lovelace.yaml"
+"""
+    (tmp_path / "ha_ai_policies.yaml").write_text(custom_yaml, encoding="utf-8")
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+
+    # Recursive subfolder allowed
+    allowed, _ = engine.check_path_permission("designer", "dashboards/views/living_room.yaml", is_write=True)
+    assert allowed is True
+
+    # Denied subfolder
+    denied, reason = engine.check_path_permission("designer", "dashboards/private/secret_view.yaml", is_write=False)
+    assert denied is False
+    assert "explicitly denied" in reason.lower()
+
+    # Read-only path reading allowed
+    ro_read, _ = engine.check_path_permission("designer", "ui-lovelace.yaml", is_write=False)
+    assert ro_read is True
+
+    # Read-only path writing blocked
+    ro_write, reason = engine.check_path_permission("designer", "ui-lovelace.yaml", is_write=True)
+    assert ro_write is False
+    assert "read-only" in reason.lower()
+
+    # Unlisted path blocked
+    blocked, reason = engine.check_path_permission("designer", "configuration.yaml", is_write=False)
+    assert blocked is False
+    assert "not permitted" in reason.lower()
+
+
+def test_check_path_permission_unknown_role(tmp_path: Path):
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+    allowed, reason = engine.check_path_permission("unknown_role", "dashboards/main.yaml")
+    assert allowed is False
+    assert "unknown role" in reason.lower()
+
+
+def test_check_path_permission_admin_allows_all(tmp_path: Path):
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+    allowed, reason = engine.check_path_permission("admin", "configuration.yaml", is_write=True)
+    assert allowed is True
+    assert "allowed" in reason.lower()
+
+
+def test_check_path_permission_windows_and_slashes(tmp_path: Path):
+    custom_yaml = """
+version: "1.0"
+roles:
+  designer:
+    description: "Designer"
+    allow_paths:
+      - "dashboards/**"
+"""
+    (tmp_path / "ha_ai_policies.yaml").write_text(custom_yaml, encoding="utf-8")
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+
+    # Windows backslash path
+    allowed, _ = engine.check_path_permission("designer", r"dashboards\views\living_room.yaml", is_write=False)
+    assert allowed is True
+
+    # Leading slash path
+    allowed, _ = engine.check_path_permission("designer", "/dashboards/views/living_room.yaml", is_write=False)
+    assert allowed is True
+
+
+def test_check_path_permission_single_star_glob(tmp_path: Path):
+    custom_yaml = """
+version: "1.0"
+roles:
+  flat_viewer:
+    description: "Flat files only"
+    allow_paths:
+      - "dashboards/*.yaml"
+"""
+    (tmp_path / "ha_ai_policies.yaml").write_text(custom_yaml, encoding="utf-8")
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+
+    # Direct file matches single star
+    allowed, _ = engine.check_path_permission("flat_viewer", "dashboards/living_room.yaml")
+    assert allowed is True
+
+    # Nested subfolder does not match single star
+    blocked, _ = engine.check_path_permission("flat_viewer", "dashboards/sub/living_room.yaml")
+    assert blocked is False
+
+
+def test_check_service_permission_globs_and_deny(tmp_path: Path):
+    custom_yaml = """
+version: "1.0"
+roles:
+  automator:
+    description: "Automator"
+    allow_services:
+      - "light.*"
+      - "switch.turn_on"
+      - "automation.reload"
+    deny_services:
+      - "light.flash_all"
+"""
+    (tmp_path / "ha_ai_policies.yaml").write_text(custom_yaml, encoding="utf-8")
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+
+    # Allowed domain glob
+    allowed, _ = engine.check_service_permission("automator", "light", "turn_on")
+    assert allowed is True
+
+    # Allowed exact service
+    allowed, _ = engine.check_service_permission("automator", "switch", "turn_on")
+    assert allowed is True
+
+    # Denied service
+    denied, reason = engine.check_service_permission("automator", "light", "flash_all")
+    assert denied is False
+    assert "explicitly denied" in reason.lower()
+
+    # Not allowed service
+    blocked, reason = engine.check_service_permission("automator", "climate", "set_temperature")
+    assert blocked is False
+    assert "not permitted" in reason.lower()
+
+
+def test_check_service_permission_unknown_role(tmp_path: Path):
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+    allowed, reason = engine.check_service_permission("unknown_role", "light", "turn_on")
+    assert allowed is False
+    assert "unknown role" in reason.lower()
+
+
+def test_check_service_permission_admin_allows_all(tmp_path: Path):
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+    allowed, reason = engine.check_service_permission("admin", "homeassistant", "restart")
+    assert allowed is True
+    assert "allowed" in reason.lower()
+
+
+
 

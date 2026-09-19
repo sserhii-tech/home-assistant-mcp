@@ -3,7 +3,8 @@
 import fnmatch
 import hmac
 import logging
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
@@ -117,6 +118,55 @@ def _match_pattern(pattern: str, target: str) -> bool:
     return fnmatch.fnmatchcase(target.lower(), pattern.lower())
 
 
+def _path_pattern_to_regex(pattern: str) -> str:
+    i = 0
+    n = len(pattern)
+    res: list[str] = []
+    while i < n:
+        if pattern[i : i + 4] == "/**/":
+            res.append("(?:/.+/|/)")
+            i += 4
+        elif pattern[i : i + 3] == "/**" and i + 3 == n:
+            res.append("(?:/.*)?")
+            i += 3
+        elif pattern[i : i + 3] == "**/":
+            res.append("(?:.+/)?")
+            i += 3
+        elif pattern[i : i + 2] == "**":
+            res.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            res.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            res.append("[^/]")
+            i += 1
+        else:
+            res.append(re.escape(pattern[i]))
+            i += 1
+    return "^" + "".join(res) + "$"
+
+
+def _match_path_pattern(pattern: str, target_path: str) -> bool:
+    posix_target = PurePosixPath(str(target_path).replace("\\", "/")).as_posix().lstrip("/")
+    if posix_target == ".":
+        posix_target = ""
+    posix_pattern = PurePosixPath(str(pattern).replace("\\", "/")).as_posix().lstrip("/")
+    if posix_pattern == ".":
+        posix_pattern = ""
+
+    if posix_pattern in ("*", "**"):
+        return True
+    if posix_pattern.lower() == posix_target.lower():
+        return True
+    if not posix_pattern:
+        return not posix_target
+
+    regex = _path_pattern_to_regex(posix_pattern)
+    return bool(re.match(regex, posix_target, re.IGNORECASE))
+
+
+
 class PolicyEngine:
     def __init__(self, config_dir: Path | str, master_api_key: str | None = None):
         self.config_dir = Path(config_dir)
@@ -220,5 +270,50 @@ class PolicyEngine:
                 return (True, "Allowed by policy")
 
         return (False, f"Tool '{tool_name}' not permitted for role '{role}'")
+
+    def check_path_permission(self, role: str, path: str, is_write: bool = False) -> tuple[bool, str]:
+        config = self.load_policies()
+        role_def = config.roles.get(role)
+        if not role_def:
+            return (False, f"Unknown role: '{role}'")
+
+        # 1. Deny rules take precedence
+        for pattern in role_def.deny_paths:
+            if _match_path_pattern(pattern, path):
+                return (False, f"Path '{path}' explicitly denied for role '{role}'")
+
+        # 2. Read-only paths blocked if writing
+        if is_write:
+            for pattern in role_def.read_only_paths:
+                if _match_path_pattern(pattern, path):
+                    return (False, f"Path '{path}' is read-only for role '{role}'")
+
+        # 3. Allow rules
+        for pattern in role_def.allow_paths:
+            if _match_path_pattern(pattern, path):
+                return (True, "Allowed by policy")
+
+        return (False, f"Path '{path}' not permitted for role '{role}'")
+
+    def check_service_permission(self, role: str, domain: str, service: str) -> tuple[bool, str]:
+        config = self.load_policies()
+        role_def = config.roles.get(role)
+        if not role_def:
+            return (False, f"Unknown role: '{role}'")
+
+        target = f"{domain}.{service}"
+
+        # 1. Deny rules take precedence
+        for pattern in role_def.deny_services:
+            if _match_pattern(pattern, target):
+                return (False, f"Service '{domain}.{service}' explicitly denied for role '{role}'")
+
+        # 2. Allow rules
+        for pattern in role_def.allow_services:
+            if _match_pattern(pattern, target):
+                return (True, "Allowed by policy")
+
+        return (False, f"Service '{domain}.{service}' not permitted for role '{role}'")
+
 
 
