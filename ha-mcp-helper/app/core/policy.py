@@ -1,7 +1,11 @@
 """Role-Based Access Control (RBAC) policy engine and configuration loader."""
 
+import logging
 from pathlib import Path
-from pydantic import BaseModel, Field
+import yaml
+from pydantic import BaseModel, Field, field_validator
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_POLICY_YAML = """version: "1.0"
 
@@ -97,6 +101,13 @@ class PolicyConfig(BaseModel):
     roles: dict[str, RoleDefinition] = Field(default_factory=dict)
     agents: dict[str, AgentDefinition] = Field(default_factory=dict)
 
+    @field_validator("roles", "agents", mode="before")
+    @classmethod
+    def handle_none_dict(cls, v):
+        if v is None:
+            return {}
+        return v
+
 class PolicyEngine:
     def __init__(self, config_dir: Path | str, master_api_key: str | None = None):
         self.config_dir = Path(config_dir)
@@ -110,3 +121,53 @@ class PolicyEngine:
             self.config_dir.mkdir(parents=True, exist_ok=True)
             self.policy_file.write_text(DEFAULT_POLICY_YAML, encoding="utf-8")
         return self.policy_file
+
+    def load_policies(self, force: bool = False) -> PolicyConfig:
+        self.ensure_policy_file()
+        try:
+            mtime = self.policy_file.stat().st_mtime
+        except OSError:
+            mtime = -1.0
+
+        if not force and self._cached_config is not None and mtime <= self._last_mtime:
+            return self._cached_config
+
+        parsed_config: PolicyConfig | None = None
+        try:
+            content = self.policy_file.read_text(encoding="utf-8")
+            if content.strip():
+                raw_dict = yaml.safe_load(content)
+                if isinstance(raw_dict, dict):
+                    parsed_config = PolicyConfig.model_validate(raw_dict)
+                else:
+                    logger.warning("Policy file %s is not a mapping; using fallback", self.policy_file)
+        except Exception as e:
+            logger.warning("Failed to load or parse policy file %s: %s", self.policy_file, e)
+
+        if parsed_config is None:
+            if self._cached_config is not None:
+                self._last_mtime = mtime
+                return self._cached_config
+            raw_default = yaml.safe_load(DEFAULT_POLICY_YAML) or {}
+            parsed_config = PolicyConfig.model_validate(raw_default)
+
+        # Ensure admin role is always present and has wildcard permissions
+        if "admin" not in parsed_config.roles:
+            parsed_config.roles["admin"] = RoleDefinition(
+                description="Full administrative access",
+                allow_tools=["*"],
+                allow_paths=["*"],
+                allow_services=["*"],
+            )
+        else:
+            admin_role = parsed_config.roles["admin"]
+            if "*" not in admin_role.allow_tools:
+                admin_role.allow_tools = ["*"]
+            if "*" not in admin_role.allow_paths:
+                admin_role.allow_paths = ["*"]
+            if "*" not in admin_role.allow_services:
+                admin_role.allow_services = ["*"]
+
+        self._last_mtime = mtime
+        self._cached_config = parsed_config
+        return self._cached_config
