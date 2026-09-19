@@ -51,4 +51,4 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Run Pytest Suite with Coverage Enforcement
-        run: uv run --directory ha-mcp-helper --extra dev pytest tests --cov=app.core.policy --cov-report=term-missing --cov-fail-under=100
+        run: uv run --directory ha-mcp-helper --extra dev pytest tests --cov=app.core.policy --cov=app.services.audit_service --cov-report=term-missing --cov-fail-under=100
