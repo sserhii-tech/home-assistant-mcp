@@ -336,3 +336,98 @@ class TestIsProtectedPath:
         assert is_protected_path("dashboards/living_room.yaml") is False
         assert is_protected_path("themes/dark.yaml") is False
 
+
+class TestDependenciesAndAuth:
+    """Test FastAPI dependency injection providers and principal authentication."""
+
+    def test_dependencies_instantiation(self, tmp_path, monkeypatch):
+        from app.core.dependencies import get_policy_engine, get_audit_service, _get_cached_policy_engine, _get_cached_audit_service
+        from app.core.policy import PolicyEngine
+        from app.services.audit_service import AuditService
+
+        monkeypatch.setenv("CONFIG_ROOT", str(tmp_path))
+        monkeypatch.setenv("ADDON_API_KEY", "master_key_123")
+
+        pe = get_policy_engine(config_root=str(tmp_path))
+        assert isinstance(pe, PolicyEngine)
+        assert pe.master_api_key == "master_key_123"
+
+        audit = get_audit_service(config_root=str(tmp_path))
+        assert isinstance(audit, AuditService)
+        assert audit.audit_dir == tmp_path / ".audit"
+
+        # Test caching
+        pe2 = _get_cached_policy_engine(str(tmp_path), "master_key_123")
+        assert pe is pe2
+        audit2 = _get_cached_audit_service(str(tmp_path))
+        assert audit is audit2
+
+    def test_get_current_principal_valid_master(self, tmp_path):
+        from app.core.dependencies import get_current_principal
+        from app.core.policy import PolicyEngine
+
+        pe = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret_123")
+        principal = get_current_principal(x_addon_api_key="master_secret_123", policy_engine=pe)
+        assert principal == ("master", "admin")
+
+    def test_get_current_principal_missing_token_raises_401(self, tmp_path):
+        from fastapi import HTTPException
+        from app.core.dependencies import get_current_principal
+        from app.core.policy import PolicyEngine
+
+        pe = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret_123")
+        with pytest.raises(HTTPException) as exc_info:
+            get_current_principal(x_addon_api_key=None, policy_engine=pe)
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Missing X-Addon-API-Key header"
+
+        with pytest.raises(HTTPException) as exc_info2:
+            get_current_principal(x_addon_api_key="", policy_engine=pe)
+        assert exc_info2.value.status_code == 401
+        assert exc_info2.value.detail == "Missing X-Addon-API-Key header"
+
+    def test_get_current_principal_invalid_token_raises_401(self, tmp_path):
+        from fastapi import HTTPException
+        from app.core.dependencies import get_current_principal
+        from app.core.policy import PolicyEngine
+
+        pe = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret_123")
+        with pytest.raises(HTTPException) as exc_info:
+            get_current_principal(x_addon_api_key="invalid_token_999", policy_engine=pe)
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Invalid or expired API token"
+
+    def test_get_current_principal_agent_and_ephemeral_tokens(self, tmp_path):
+        from app.core.dependencies import get_current_principal
+        from app.core.policy import PolicyEngine
+
+        custom_yaml = """
+version: "1.0"
+roles:
+  designer:
+    description: "Designer"
+agents:
+  bot1:
+    role: "designer"
+    token: "sec_agent_bot1_key"
+"""
+        (tmp_path / "ha_ai_policies.yaml").write_text(custom_yaml, encoding="utf-8")
+        pe = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret_123")
+
+        # Configured agent token
+        principal = get_current_principal(x_addon_api_key="sec_agent_bot1_key", policy_engine=pe)
+        assert principal == ("bot1", "designer")
+
+        # Ephemeral token
+        ephem = pe.issue_token(agent_id="ephem_agent", role="designer", ttl_minutes=10)
+        principal_ephem = get_current_principal(x_addon_api_key=ephem.token, policy_engine=pe)
+        assert principal_ephem == ("ephem_agent", "designer")
+
+    def test_get_agent_rationale(self):
+        from app.core.dependencies import get_agent_rationale
+
+        assert get_agent_rationale("Fixing lights automation") == "Fixing lights automation"
+        assert get_agent_rationale(None) == ""
+        assert get_agent_rationale("") == ""
+
+

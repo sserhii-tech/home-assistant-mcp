@@ -1,6 +1,7 @@
-"""Data transfer models for API endpoints."""
-
 from pydantic import BaseModel
+
+from ..core.policy import RoleDefinition
+from ..services.audit_service import AuditEvent
 
 
 class FileReadRequest(BaseModel):
@@ -49,3 +50,32 @@ class HealthResponse(BaseModel):
 class LogsTailResponse(BaseModel):
     lines: list[str]
     count: int
+
+
+class IssueTokenRequest(BaseModel):
+    agent_id: str
+    role: str
+    ttl_minutes: int = 60
+
+
+class IssueTokenResponse(BaseModel):
+    agent_id: str
+    role: str
+    token: str
+    expires_at: str
+
+
+class AgentSummary(BaseModel):
+    role: str
+    description: str = ""
+
+
+class PoliciesResponse(BaseModel):
+    roles: dict[str, RoleDefinition]
+    agents: dict[str, AgentSummary]
+
+
+class AuditLogsResponse(BaseModel):
+    total_events: int
+    events: list[AuditEvent]
+

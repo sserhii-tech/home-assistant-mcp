@@ -1,13 +1,15 @@
-"""Role-Based Access Control (RBAC) policy engine and configuration loader."""
-
 import fnmatch
 import hmac
 import logging
 from pathlib import Path, PurePosixPath
 import re
+import threading
+import uuid
+from datetime import datetime, timedelta, timezone
 import yaml
 from pydantic import BaseModel, Field, field_validator
 from app.core.security import is_protected_path
+
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +102,13 @@ class AgentDefinition(BaseModel):
     token: str
     description: str = ""
 
+class EphemeralToken(BaseModel):
+    token: str
+    agent_id: str
+    role: str
+    expires_at: str  # ISO 8601 UTC string
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
 class PolicyConfig(BaseModel):
     version: str = "1.0"
     roles: dict[str, RoleDefinition] = Field(default_factory=dict)
@@ -180,6 +189,8 @@ class PolicyEngine:
         self.master_api_key = master_api_key
         self._cached_config: PolicyConfig | None = None
         self._last_mtime: float = -1.0
+        self._ephemeral_tokens: dict[str, EphemeralToken] = {}
+        self._token_lock = threading.Lock()
 
     def ensure_policy_file(self) -> Path:
         if not self.policy_file.exists():
@@ -241,6 +252,44 @@ class PolicyEngine:
         self._cached_config = parsed_config
         return self._cached_config
 
+    def _purge_expired_tokens_locked(self) -> None:
+        """Purge all expired or corrupted ephemeral tokens under lock."""
+        now_utc = datetime.now(timezone.utc)
+        expired = []
+        for token_str, ephem in self._ephemeral_tokens.items():
+            try:
+                exp_dt = datetime.fromisoformat(ephem.expires_at)
+                if exp_dt.tzinfo is None:
+                    exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                if exp_dt <= now_utc:
+                    expired.append(token_str)
+            except Exception:
+                expired.append(token_str)
+        for token_str in expired:
+            del self._ephemeral_tokens[token_str]
+
+    def issue_token(self, agent_id: str, role: str, ttl_minutes: int = 60) -> EphemeralToken:
+        config = self.load_policies()
+        if role not in config.roles:
+            raise ValueError(f"Role '{role}' is not defined in policies")
+        if ttl_minutes <= 0 or ttl_minutes > 1440:
+            raise ValueError("ttl_minutes must be between 1 and 1440")
+
+        token_str = f"sec_agent_ephem_{uuid.uuid4().hex}"
+        now_utc = datetime.now(timezone.utc)
+        expires_at = (now_utc + timedelta(minutes=ttl_minutes)).isoformat()
+        ephem_obj = EphemeralToken(
+            token=token_str,
+            agent_id=agent_id,
+            role=role,
+            expires_at=expires_at,
+            created_at=now_utc.isoformat(),
+        )
+        with self._token_lock:
+            self._purge_expired_tokens_locked()
+            self._ephemeral_tokens[token_str] = ephem_obj
+        return ephem_obj
+
     def resolve_principal(self, token: str | None) -> tuple[str | None, str | None]:
         if not token:
             return (None, None)
@@ -252,7 +301,14 @@ class PolicyEngine:
         ):
             return ("master", "admin")
 
-        # 2. Configured agents check
+        # 2. Ephemeral tokens check
+        with self._token_lock:
+            self._purge_expired_tokens_locked()
+            if token in self._ephemeral_tokens:
+                ephem = self._ephemeral_tokens[token]
+                return (ephem.agent_id, ephem.role)
+
+        # 3. Configured agents check
         config = self.load_policies()
         for agent_id, agent in config.agents.items():
             if agent.token and hmac.compare_digest(
@@ -262,6 +318,8 @@ class PolicyEngine:
                 return (agent_id, agent.role)
 
         return (None, None)
+
+
 
     def check_tool_permission(self, role: str, tool_name: str) -> tuple[bool, str]:
         config = self.load_policies()
