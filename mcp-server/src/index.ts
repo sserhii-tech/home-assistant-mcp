@@ -20,7 +20,12 @@ export function createClients(): ToolClients {
   const config = loadConfig();
   const restClient = new HARestAdapter({ haUrl: config.haUrl, haToken: config.haToken });
   const wsClient = new HAWsAdapter({ haUrl: config.haUrl, haToken: config.haToken });
-  const addonClient = new AddonAdapter({ addonUrl: config.addonUrl, addonKey: config.addonKey });
+  const addonClient = new AddonAdapter({
+    addonUrl: config.addonUrl,
+    addonKey: config.addonKey,
+    agentKey: config.agentKey,
+    agentId: config.agentId,
+  });
   const renderer = new PlaywrightDashboardAdapter({
     haUrl: config.haUrl,
     haToken: config.haToken,

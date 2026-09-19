@@ -1,9 +1,14 @@
 import axios, { AxiosInstance } from "axios";
 import {
   AddonHealthResult,
+  AuditQueryParams,
+  AuditQueryResponse,
   FileReadResult,
   FileWriteResult,
   IAddonClient,
+  IssueTokenParams,
+  IssueTokenResponse,
+  PoliciesResponse,
 } from "../../domain/ports/addon-client.port.js";
 import { BackupRestoreResult, LogsTailResult, SnapshotInfo } from "../../domain/models/system.js";
 import { ClientError } from "../../core/errors.js";
@@ -11,6 +16,8 @@ import { ClientError } from "../../core/errors.js";
 export interface AddonClientOptions {
   addonUrl: string;
   addonKey: string;
+  agentKey?: string;
+  agentId?: string;
   timeoutMs?: number;
 }
 
@@ -27,7 +34,7 @@ export class AddonAdapter implements IAddonClient {
       key = addonKey ?? "";
     } else {
       url = options.addonUrl;
-      key = options.addonKey;
+      key = options.agentKey || options.addonKey;
       timeout = options.timeoutMs ?? 10000;
     }
 
@@ -64,15 +71,23 @@ export class AddonAdapter implements IAddonClient {
   async writeFile(
     path: string,
     content: string,
-    options: { validateYaml?: boolean; label?: string } = {}
+    options: { validateYaml?: boolean; label?: string; rationale?: string } = {}
   ): Promise<FileWriteResult> {
     try {
-      const resp = await this.client.post<FileWriteResult>("/api/v1/file/write", {
-        path,
-        content,
-        validate_yaml: options.validateYaml ?? true,
-        label: options.label ?? "",
-      });
+      const headers: Record<string, string> = {};
+      if (options.rationale) {
+        headers["X-Agent-Rationale"] = options.rationale;
+      }
+      const resp = await this.client.post<FileWriteResult>(
+        "/api/v1/file/write",
+        {
+          path,
+          content,
+          validate_yaml: options.validateYaml ?? true,
+          label: options.label ?? "",
+        },
+        { headers }
+      );
       return resp.data;
     } catch (err: any) {
       throw new ClientError(`Addon writeFile failed: ${err.message}`, err.response?.status);
@@ -105,6 +120,61 @@ export class AddonAdapter implements IAddonClient {
       return resp.data;
     } catch (err: any) {
       throw new ClientError(`Addon getLogs failed: ${err.message}`, err.response?.status);
+    }
+  }
+
+  async getAuditLogs(params: AuditQueryParams = {}): Promise<AuditQueryResponse> {
+    try {
+      const queryParams: Record<string, any> = {};
+      if (params.agent_id !== undefined) queryParams.agent_id = params.agent_id;
+      if (params.role !== undefined) queryParams.role = params.role;
+      if (params.status !== undefined) queryParams.status = params.status;
+      if (params.limit !== undefined) queryParams.limit = params.limit;
+      if (params.since !== undefined) queryParams.since = params.since;
+
+      const headers: Record<string, string> = {};
+      if (params.rationale) {
+        headers["X-Agent-Rationale"] = params.rationale;
+      }
+
+      const resp = await this.client.get<AuditQueryResponse>("/api/v1/audit/logs", {
+        params: queryParams,
+        headers,
+      });
+      return resp.data;
+    } catch (err: any) {
+      throw new ClientError(`Addon getAuditLogs failed: ${err.message}`, err.response?.status);
+    }
+  }
+
+  async issueAgentToken(params: IssueTokenParams): Promise<IssueTokenResponse> {
+    try {
+      const headers: Record<string, string> = {};
+      if (params.rationale) {
+        headers["X-Agent-Rationale"] = params.rationale;
+      }
+
+      const resp = await this.client.post<IssueTokenResponse>(
+        "/api/v1/agent/token",
+        {
+          agent_id: params.agent_id,
+          role: params.role,
+          ttl_minutes: params.ttl_minutes ?? 60,
+        },
+        { headers }
+      );
+      return resp.data;
+    } catch (err: any) {
+      throw new ClientError(`Addon issueAgentToken failed: ${err.message}`, err.response?.status);
+    }
+  }
+
+  async getAgentPolicies(): Promise<PoliciesResponse> {
+    try {
+      const resp = await this.client.get<PoliciesResponse>("/api/v1/agent/policies");
+      return resp.data;
+    } catch (err: any) {
+      throw new ClientError(`Addon getAgentPolicies failed: ${err.message}`, err.response?.status);
     }
   }
 }
