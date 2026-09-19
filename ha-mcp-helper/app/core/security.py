@@ -63,6 +63,33 @@ class SecurityException(Exception):
     pass
 
 
+def is_protected_path(requested_path: str | None) -> bool:
+    """Check whether a requested relative path matches hardcoded protected system deny lists."""
+    if requested_path is None or "\0" in str(requested_path):
+        return True
+
+    clean_path = str(requested_path).replace("\\", "/").strip("/")
+    pure = pathlib.PurePosixPath(clean_path)
+    if ".." in pure.parts:
+        return True
+
+    rel_posix = pure.as_posix().lower()
+    if rel_posix == "." or rel_posix == "":
+        return False
+    filename = pure.name.lower()
+
+    for denied_rel in DENY_LIST_RELATIVE_PATHS:
+        denied_norm = denied_rel.lower()
+        if rel_posix == denied_norm or rel_posix.startswith(f"{denied_norm}/") or rel_posix.startswith(f"{denied_norm}."):
+            return True
+
+    for pattern in DENY_LIST_PATTERNS:
+        if fnmatch.fnmatch(filename, pattern.lower()):
+            return True
+
+    return False
+
+
 def verify_api_key(provided_key: str | None, expected_key: str | None) -> bool:
     """Verify an API key using constant-time comparison."""
     if not provided_key or not expected_key:

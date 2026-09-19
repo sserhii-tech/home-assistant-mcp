@@ -12,6 +12,7 @@ from security import (
     verify_api_key,
     sanitize_path,
     sanitize_log_line,
+    is_protected_path,
 )
 
 
@@ -299,3 +300,39 @@ class TestSanitizeLogLine:
         assert "key456" not in redacted
         assert "secretpass" not in redacted
         assert "Authorization: Bearer ***REDACTED*** and api_key=***REDACTED*** for password: ***REDACTED***" in redacted
+
+
+class TestIsProtectedPath:
+    """Test helper for identifying protected system files and path traversal."""
+
+    def test_empty_and_null_bytes(self):
+        assert is_protected_path(None) is True
+        assert is_protected_path("safe/path\0null") is True
+        assert is_protected_path("") is False
+        assert is_protected_path(".") is False
+
+    def test_traversal_paths(self):
+        assert is_protected_path("dashboards/../../secrets.yaml") is True
+        assert is_protected_path("../secrets.yaml") is True
+
+    def test_protected_deny_list_patterns(self):
+        assert is_protected_path("secrets.yaml") is True
+        assert is_protected_path("nested/secrets.yaml") is True
+        assert is_protected_path("ip_bans.yaml") is True
+        assert is_protected_path("server.pem") is True
+        assert is_protected_path("private.key") is True
+        assert is_protected_path("id_rsa") is True
+        assert is_protected_path("id_rsa.pub") is True
+
+    def test_protected_relative_paths(self):
+        assert is_protected_path(".storage/core.auth") is True
+        assert is_protected_path(".storage/core.auth.bak") is True
+        assert is_protected_path(".storage/core.config_entries") is True
+        assert is_protected_path(".storage/core.config_entries/sub") is True
+
+    def test_safe_paths(self):
+        assert is_protected_path("configuration.yaml") is False
+        assert is_protected_path("automations.yaml") is False
+        assert is_protected_path("dashboards/living_room.yaml") is False
+        assert is_protected_path("themes/dark.yaml") is False
+
