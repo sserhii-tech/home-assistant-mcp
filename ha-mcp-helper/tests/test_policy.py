@@ -397,7 +397,7 @@ roles:
     description: "Glob tester"
     allow_paths:
       - "dashboards/**/cards/*.yaml"
-      - "**/secrets.yaml"
+      - "**/theme.yaml"
       - "dashboards/card**"
       - "dashboards/view?.yaml"
       - "."
@@ -415,9 +415,9 @@ roles:
     assert allowed is True
 
     # **/ test (lines 133-134)
-    allowed, _ = engine.check_path_permission("glob_tester", "secrets.yaml")
+    allowed, _ = engine.check_path_permission("glob_tester", "theme.yaml")
     assert allowed is True
-    allowed, _ = engine.check_path_permission("glob_tester", "a/b/c/secrets.yaml")
+    allowed, _ = engine.check_path_permission("glob_tester", "a/b/c/theme.yaml")
     assert allowed is True
 
     # ** without slash (lines 136-137)
@@ -503,7 +503,7 @@ roles:
     allowed, _ = engine.check_tool_permission("admin", "ha_automation_write")
     assert allowed is True
 
-    allowed, _ = engine.check_path_permission("admin", "secrets.yaml", is_write=True)
+    allowed, _ = engine.check_path_permission("admin", "automations.yaml", is_write=True)
     assert allowed is True
 
     allowed, _ = engine.check_path_permission("admin", "configuration.yaml", is_write=True)
@@ -511,6 +511,38 @@ roles:
 
     allowed, _ = engine.check_service_permission("admin", "homeassistant", "restart")
     assert allowed is True
+
+
+def test_check_path_permission_protected_system_files_denied_for_all_roles(tmp_path: Path):
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+    
+    protected_files = [
+        "secrets.yaml",
+        "nested/secrets.yaml",
+        "ip_bans.yaml",
+        "server.pem",
+        "private.key",
+        "id_rsa",
+        "id_rsa.pub",
+        ".storage/core.auth",
+        ".storage/core.config_entries",
+        ".storage/core.auth.bak",
+    ]
+
+    for protected in protected_files:
+        # Denied for admin role (despite allow_paths: ["*"])
+        allowed, reason = engine.check_path_permission("admin", protected, is_write=False)
+        assert allowed is False, f"Admin was incorrectly allowed to read {protected}"
+        assert "protected system file" in reason.lower()
+
+        allowed, reason = engine.check_path_permission("admin", protected, is_write=True)
+        assert allowed is False, f"Admin was incorrectly allowed to write {protected}"
+        assert "protected system file" in reason.lower()
+
+        # Denied for dashboard_designer
+        allowed, reason = engine.check_path_permission("dashboard_designer", protected, is_write=False)
+        assert allowed is False
+        assert "protected system file" in reason.lower()
 
 
 def test_check_path_permission_traversal_blocked(tmp_path: Path):
@@ -530,7 +562,11 @@ roles:
     # Path traversal in target path should be blocked even when matching glob prefix
     allowed, reason = engine.check_path_permission("designer", "dashboards/../../secrets.yaml")
     assert allowed is False
-    assert "not permitted" in reason.lower()
+    assert "protected system file" in reason.lower()
+
+    allowed, reason = engine.check_path_permission("designer", "dashboards/../../other.yaml")
+    assert allowed is False
+    assert "protected system file" in reason.lower()
 
     allowed, _ = engine.check_path_permission("designer", r"dashboards\..\..\secrets.yaml")
     assert allowed is False

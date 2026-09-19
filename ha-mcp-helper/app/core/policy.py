@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 import re
 import yaml
 from pydantic import BaseModel, Field, field_validator
+from app.core.security import is_protected_path
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +282,10 @@ class PolicyEngine:
         return (False, f"Tool '{tool_name}' not permitted for role '{role}'")
 
     def check_path_permission(self, role: str, path: str, is_write: bool = False) -> tuple[bool, str]:
+        # 0. Inviolable hardcoded protected paths cannot be accessed by ANY role (even admin / wildcard rules)
+        if is_protected_path(path):
+            return (False, f"Access denied: '{path}' is a protected system file")
+
         config = self.load_policies()
         role_def = config.roles.get(role)
         if not role_def:
