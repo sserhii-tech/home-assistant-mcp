@@ -389,5 +389,104 @@ def test_check_service_permission_admin_allows_all(tmp_path: Path):
     assert "allowed" in reason.lower()
 
 
+def test_path_pattern_advanced_globs(tmp_path: Path):
+    custom_yaml = """
+version: "1.0"
+roles:
+  glob_tester:
+    description: "Glob tester"
+    allow_paths:
+      - "dashboards/**/cards/*.yaml"
+      - "**/secrets.yaml"
+      - "dashboards/card**"
+      - "dashboards/view?.yaml"
+      - "."
+      - ""
+    deny_paths:
+      - "private/**/denied.yaml"
+"""
+    (tmp_path / "ha_ai_policies.yaml").write_text(custom_yaml, encoding="utf-8")
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+
+    # /**/ test (lines 127-128)
+    allowed, _ = engine.check_path_permission("glob_tester", "dashboards/deep/nested/cards/light.yaml")
+    assert allowed is True
+    allowed, _ = engine.check_path_permission("glob_tester", "dashboards/cards/light.yaml")
+    assert allowed is True
+
+    # **/ test (lines 133-134)
+    allowed, _ = engine.check_path_permission("glob_tester", "secrets.yaml")
+    assert allowed is True
+    allowed, _ = engine.check_path_permission("glob_tester", "a/b/c/secrets.yaml")
+    assert allowed is True
+
+    # ** without slash (lines 136-137)
+    allowed, _ = engine.check_path_permission("glob_tester", "dashboards/card123")
+    assert allowed is True
+
+    # ? wildcard (lines 142-143)
+    allowed, _ = engine.check_path_permission("glob_tester", "dashboards/view1.yaml")
+    assert allowed is True
+    allowed, _ = engine.check_path_permission("glob_tester", "dashboards/view12.yaml")
+    assert blocked is False if (blocked := engine.check_path_permission("glob_tester", "dashboards/view12.yaml")[0]) else True
+
+    # "." target and pattern (lines 153, 156, 163)
+    allowed, _ = engine.check_path_permission("glob_tester", ".")
+    assert allowed is True
+    allowed, _ = engine.check_path_permission("glob_tester", "")
+    assert allowed is True
+
+
+def test_load_policies_stat_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+    engine.ensure_policy_file()
+
+    orig_stat = Path.stat
+    calls = 0
+
+    def mock_stat(self, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise OSError("Simulated disk error")
+        return orig_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", mock_stat)
+    config = engine.load_policies()
+    assert "admin" in config.roles
+
+
+def test_load_policies_non_dict_yaml(tmp_path: Path):
+    policy_file = tmp_path / "ha_ai_policies.yaml"
+    policy_file.write_text("- item1\n- item2\n", encoding="utf-8")
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+    config = engine.load_policies()
+    # Should fallback gracefully to default policy where admin exists
+    assert "admin" in config.roles
+
+
+def test_load_policies_admin_role_replaces_restricted_permissions(tmp_path: Path):
+    custom_yaml = """
+version: "1.0"
+roles:
+  admin:
+    description: "Restricted admin attempt"
+    allow_tools:
+      - "ha_system_health"
+    allow_paths:
+      - "dashboards/**"
+    allow_services:
+      - "light.*"
+"""
+    policy_file = tmp_path / "ha_ai_policies.yaml"
+    policy_file.write_text(custom_yaml, encoding="utf-8")
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+    config = engine.load_policies()
+
+    assert config.roles["admin"].allow_tools == ["*"]
+    assert config.roles["admin"].allow_paths == ["*"]
+    assert config.roles["admin"].allow_services == ["*"]
+
+
 
 
