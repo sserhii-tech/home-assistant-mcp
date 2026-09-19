@@ -866,4 +866,127 @@ def test_security_violation_audit_logging(client, auth_headers, temp_config_dir,
     assert len(sec_events) >= 3
 
 
+# ---------------------------------------------------------------------------
+# 9. End-to-End Multi-Agent Lifecycle & Audit Trail Integration Test
+# ---------------------------------------------------------------------------
+
+def test_e2e_multiagent_lifecycle_and_audit_trail(client, auth_headers, temp_config_dir):
+    """End-to-end integration test verifying multi-agent lifecycle, policy enforcement, audit trails, and token expiry."""
+    # 0. Setup initial file
+    initial_content = "- alias: 'Base Automation'\n  trigger: []\n  action: []\n"
+    (temp_config_dir / "automations.yaml").write_text(initial_content, encoding="utf-8")
+
+    # 1. Admin issues ephemeral token for automation_builder with ttl_minutes=60
+    res_token = client.post(
+        "/api/v1/agent/token",
+        headers={**auth_headers, "X-Agent-Rationale": "Provisioning automation builder sub-agent"},
+        json={"agent_id": "auto_subagent", "role": "automation_builder", "ttl_minutes": 60},
+    )
+    assert res_token.status_code == 200
+    token_data = res_token.json()
+    assert token_data["agent_id"] == "auto_subagent"
+    assert token_data["role"] == "automation_builder"
+    subagent_token = token_data["token"]
+    assert subagent_token.startswith("sec_agent_ephem_")
+
+    # 2. Sub-agent calls /api/v1/file/write on automations.yaml with X-Agent-Rationale
+    rationale_write = "Creating morning routine automation"
+    new_automations = "- alias: 'Morning Routine'\n  trigger:\n    - platform: time\n      at: '07:00:00'\n  action: []\n"
+    res_write = client.post(
+        "/api/v1/file/write",
+        headers={
+            "X-Addon-API-Key": subagent_token,
+            "X-Agent-Rationale": rationale_write,
+        },
+        json={
+            "path": "automations.yaml",
+            "content": new_automations,
+            "validate_yaml": True,
+        },
+    )
+    # Verify response 200 and snapshot created with rationale label
+    assert res_write.status_code == 200
+    write_resp = res_write.json()
+    assert write_resp["success"] is True
+    snap_id = write_resp["snapshot_id"]
+
+    snaps_res = client.get("/api/v1/backup/list", headers=auth_headers)
+    assert snaps_res.status_code == 200
+    snaps = snaps_res.json()
+    matched_snap = next((s for s in snaps if s["snapshot_id"] == snap_id), None)
+    assert matched_snap is not None
+    assert matched_snap["label"] == rationale_write
+    assert (temp_config_dir / "automations.yaml").read_text(encoding="utf-8") == new_automations
+
+    # 3. Sub-agent attempts unauthorized write to ui-lovelace.yaml (denied for automation_builder)
+    res_unauth = client.post(
+        "/api/v1/file/write",
+        headers={
+            "X-Addon-API-Key": subagent_token,
+            "X-Agent-Rationale": "Attempt to modify dashboard UI",
+        },
+        json={
+            "path": "ui-lovelace.yaml",
+            "content": "title: Hacked Dashboard\n",
+            "validate_yaml": True,
+        },
+    )
+    # Verify response 403 ForbiddenByPolicy
+    assert res_unauth.status_code == 403
+    unauth_data = res_unauth.json()
+    assert unauth_data["detail"]["error"] == "ForbiddenByPolicy"
+    assert "not permitted for role 'automation_builder'" in unauth_data["detail"]["message"]
+
+    # 4. Query /api/v1/audit/logs with agent_id filter; verify full history in reverse chronological order
+    res_audit_sub = client.get("/api/v1/audit/logs?agent_id=auto_subagent", headers=auth_headers)
+    assert res_audit_sub.status_code == 200
+    sub_events = res_audit_sub.json()["events"]
+    assert len(sub_events) == 2
+    # Reverse chronological order: 1st is denied write, 2nd is allowed write
+    assert sub_events[0]["status"] == "denied_policy"
+    assert sub_events[0]["target"] == "ui-lovelace.yaml"
+    assert sub_events[0]["tool"] == "ha_file_write"
+    assert sub_events[0]["rationale"] == "Attempt to modify dashboard UI"
+    assert sub_events[1]["status"] == "allowed"
+    assert sub_events[1]["target"] == "automations.yaml"
+    assert sub_events[1]["tool"] == "ha_file_write"
+    assert sub_events[1]["snapshot_id"] == snap_id
+    assert sub_events[1]["rationale"] == rationale_write
+
+    # Query all audit logs to verify admin token issuance event is present in the audit trail
+    res_audit_all = client.get("/api/v1/audit/logs", headers=auth_headers)
+    assert res_audit_all.status_code == 200
+    all_events = res_audit_all.json()["events"]
+    token_issue_event = next((e for e in all_events if e["action"] == "token_issue" and e["target"] == "auto_subagent"), None)
+    assert token_issue_event is not None
+    assert token_issue_event["status"] == "allowed"
+    assert token_issue_event["agent_id"] == "master"
+    assert token_issue_event["rationale"] == "Provisioning automation builder sub-agent"
+
+    # 5. Verify expired ephemeral token returns 401 Unauthorized across endpoints
+    from app.core.dependencies import get_policy_engine
+    pe = get_policy_engine(str(temp_config_dir))
+    with pe._token_lock:
+        pe._ephemeral_tokens[subagent_token].expires_at = "2000-01-01T00:00:00+00:00"
+
+    endpoints_to_test = [
+        ("GET", "/api/v1/health", None),
+        ("POST", "/api/v1/file/read", {"path": "automations.yaml"}),
+        ("POST", "/api/v1/file/write", {"path": "automations.yaml", "content": "- alias: Expired\n"}),
+        ("GET", "/api/v1/backup/list", None),
+        ("POST", "/api/v1/backup/restore", {"snapshot_id": snap_id}),
+        ("GET", "/api/v1/logs/tail", None),
+        ("GET", "/api/v1/audit/logs", None),
+        ("POST", "/api/v1/agent/token", {"agent_id": "new_bot", "role": "guest"}),
+    ]
+    for method, path, json_body in endpoints_to_test:
+        if method == "GET":
+            res_exp = client.get(path, headers={"X-Addon-API-Key": subagent_token})
+        else:
+            res_exp = client.post(path, headers={"X-Addon-API-Key": subagent_token}, json=json_body)
+        assert res_exp.status_code == 401, f"{path} did not return 401 for expired token"
+        assert res_exp.json().get("detail") == "Invalid or expired API token"
+
+
+
 

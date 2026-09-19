@@ -26,7 +26,7 @@ minversion = "8.0"
 testpaths = ["tests"]
 pythonpath = ["app", "."]
 asyncio_mode = "auto"
-addopts = "--cov=app.core.policy --cov=app.services.audit_service --cov=app.core.dependencies --cov-report=term-missing --cov-fail-under=100"
+addopts = "--cov=app.core.policy --cov=app.services.audit_service --cov=app.core.dependencies --cov=app.api.routes.agent --cov=app.api.routes.audit --cov=app.api.routes.files --cov=app.api.routes.backups --cov-report=term-missing --cov-fail-under=100"
 
 [tool.coverage.run]
 source = ["app"]
