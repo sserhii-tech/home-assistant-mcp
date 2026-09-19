@@ -608,3 +608,262 @@ def test_get_audit_logs_unauthorized_role_forbidden(client, auth_headers, temp_c
     assert denied_events[-1]["target"] == "audit_logs"
 
 
+# ---------------------------------------------------------------------------
+# 8. File & Backup RBAC Policy Enforcement and Audit Logging Tests
+# ---------------------------------------------------------------------------
+
+def test_file_read_rbac_policy_and_audit(client, auth_headers, temp_config_dir):
+    """File read enforces RBAC permissions and records structured audit events."""
+    import json
+    # Setup files
+    (temp_config_dir / "dashboards").mkdir(parents=True, exist_ok=True)
+    (temp_config_dir / "dashboards" / "main.yaml").write_bytes(b"title: Main UI\n")
+    (temp_config_dir / "automations.yaml").write_bytes(b"- alias: Test\n")
+
+    # 1. Admin reads automations.yaml (allowed)
+    res_admin = client.post(
+        "/api/v1/file/read",
+        headers={**auth_headers, "X-Agent-Rationale": "Admin reading automations"},
+        json={"path": "automations.yaml"},
+    )
+    assert res_admin.status_code == 200
+    assert res_admin.json()["content"] == "- alias: Test\n"
+
+    # Issue token for dashboard_designer (allowed dashboards/**, denied automations.yaml)
+    res_token = client.post(
+        "/api/v1/agent/token",
+        headers=auth_headers,
+        json={"agent_id": "designer_agent", "role": "dashboard_designer", "ttl_minutes": 60},
+    )
+    assert res_token.status_code == 200
+    designer_token = res_token.json()["token"]
+    designer_headers = {"X-Addon-API-Key": designer_token, "X-Agent-Rationale": "Inspect dashboard"}
+
+    # 2. Designer reads dashboards/main.yaml (allowed)
+    res_designer = client.post(
+        "/api/v1/file/read",
+        headers=designer_headers,
+        json={"path": "dashboards/main.yaml"},
+    )
+    assert res_designer.status_code == 200
+    assert res_designer.json()["content"] == "title: Main UI\n"
+
+    # 3. Designer attempts to read automations.yaml (denied by policy)
+    res_denied = client.post(
+        "/api/v1/file/read",
+        headers=designer_headers,
+        json={"path": "automations.yaml"},
+    )
+    assert res_denied.status_code == 403
+    data_denied = res_denied.json()
+    assert data_denied["detail"]["error"] == "ForbiddenByPolicy"
+    assert "not permitted for role 'dashboard_designer'" in data_denied["detail"]["message"]
+
+    # Verify audit events in .audit/audit.jsonl
+    audit_file = temp_config_dir / ".audit" / "audit.jsonl"
+    assert audit_file.exists()
+    lines = [json.loads(line) for line in audit_file.read_text(encoding="utf-8").strip().splitlines()]
+    
+    # Check designer allowed event
+    des_allowed = [e for e in lines if e.get("agent_id") == "designer_agent" and e.get("status") == "allowed" and e.get("action") == "file_read"]
+    assert len(des_allowed) == 1
+    assert des_allowed[0]["target"] == "dashboards/main.yaml"
+    assert des_allowed[0]["tool"] == "ha_file_read"
+    assert des_allowed[0]["rationale"] == "Inspect dashboard"
+
+    # Check designer denied event
+    des_denied = [e for e in lines if e.get("agent_id") == "designer_agent" and e.get("status") == "denied_policy" and e.get("action") == "file_read"]
+    assert len(des_denied) == 1
+    assert des_denied[0]["target"] == "automations.yaml"
+    assert des_denied[0]["tool"] == "ha_file_read"
+
+
+def test_file_write_rbac_policy_rationale_snapshot_and_audit(client, auth_headers, temp_config_dir):
+    """File write enforces RBAC permissions, attaches rationale to snapshot label, and audits events."""
+    import json
+    # Issue tokens for dashboard_designer and diagnostics_monitor
+    res_des = client.post(
+        "/api/v1/agent/token",
+        headers=auth_headers,
+        json={"agent_id": "designer_1", "role": "dashboard_designer", "ttl_minutes": 60},
+    )
+    designer_token = res_des.json()["token"]
+
+    res_diag = client.post(
+        "/api/v1/agent/token",
+        headers=auth_headers,
+        json={"agent_id": "monitor_1", "role": "diagnostics_monitor", "ttl_minutes": 60},
+    )
+    diag_token = res_diag.json()["token"]
+
+    # 1. Designer writes permitted path with X-Agent-Rationale
+    rationale_text = "Fix card alignment in living room view"
+    res_write = client.post(
+        "/api/v1/file/write",
+        headers={"X-Addon-API-Key": designer_token, "X-Agent-Rationale": rationale_text},
+        json={
+            "path": "dashboards/living_room.yaml",
+            "content": "views:\n  - title: Living Room\n",
+            "validate_yaml": True,
+        },
+    )
+    assert res_write.status_code == 200
+    write_data = res_write.json()
+    assert write_data["success"] is True
+    snap_id = write_data["snapshot_id"]
+
+    # Verify snapshot metadata has label from X-Agent-Rationale
+    snaps = client.get("/api/v1/backup/list", headers=auth_headers).json()
+    matched_snap = next((s for s in snaps if s["snapshot_id"] == snap_id), None)
+    assert matched_snap is not None
+    assert matched_snap["label"] == rationale_text
+
+    # 2. Designer attempts to write unpermitted path (automations.yaml)
+    res_write_denied = client.post(
+        "/api/v1/file/write",
+        headers={"X-Addon-API-Key": designer_token, "X-Agent-Rationale": "Try edit automations"},
+        json={"path": "automations.yaml", "content": "- alias: Hack\n", "validate_yaml": True},
+    )
+    assert res_write_denied.status_code == 403
+    assert res_write_denied.json()["detail"]["error"] == "ForbiddenByPolicy"
+
+    # 3. Diagnostics monitor attempts to write read-only path (configuration.yaml)
+    res_ro_denied = client.post(
+        "/api/v1/file/write",
+        headers={"X-Addon-API-Key": diag_token, "X-Agent-Rationale": "Try write config"},
+        json={"path": "configuration.yaml", "content": "homeassistant:\n", "validate_yaml": True},
+    )
+    assert res_ro_denied.status_code == 403
+    assert res_ro_denied.json()["detail"]["error"] == "ForbiddenByPolicy"
+    assert "read-only" in res_ro_denied.json()["detail"]["message"].lower()
+
+    # Verify audit entries
+    audit_file = temp_config_dir / ".audit" / "audit.jsonl"
+    lines = [json.loads(line) for line in audit_file.read_text(encoding="utf-8").strip().splitlines()]
+
+    # Designer allowed write
+    des_allowed = [e for e in lines if e.get("agent_id") == "designer_1" and e.get("status") == "allowed" and e.get("action") == "file_write"]
+    assert len(des_allowed) == 1
+    assert des_allowed[0]["snapshot_id"] == snap_id
+    assert des_allowed[0]["rationale"] == rationale_text
+
+    # Designer denied write
+    des_denied = [e for e in lines if e.get("agent_id") == "designer_1" and e.get("status") == "denied_policy" and e.get("action") == "file_write"]
+    assert len(des_denied) == 1
+    assert des_denied[0]["target"] == "automations.yaml"
+
+    # Monitor denied write
+    mon_denied = [e for e in lines if e.get("agent_id") == "monitor_1" and e.get("status") == "denied_policy" and e.get("action") == "file_write"]
+    assert len(mon_denied) == 1
+    assert mon_denied[0]["target"] == "configuration.yaml"
+
+
+def test_backup_restore_rbac_policy_and_audit(client, auth_headers, temp_config_dir):
+    """Backup restore checks RBAC tool permissions and audits restore operations."""
+    import json
+    # Write a file to create a snapshot
+    res_w = client.post(
+        "/api/v1/file/write",
+        headers=auth_headers,
+        json={"path": "scenes.yaml", "content": "- name: Relax\n"},
+    )
+    assert res_w.status_code == 200
+    snap_id = res_w.json()["snapshot_id"]
+
+    # Issue token for dashboard_designer (which is denied ha_system_restore_backup)
+    res_des = client.post(
+        "/api/v1/agent/token",
+        headers=auth_headers,
+        json={"agent_id": "designer_user", "role": "dashboard_designer", "ttl_minutes": 60},
+    )
+    designer_token = res_des.json()["token"]
+
+    # 1. Non-admin (dashboard_designer) attempts restore -> 403 ForbiddenByPolicy
+    res_denied = client.post(
+        "/api/v1/backup/restore",
+        headers={"X-Addon-API-Key": designer_token, "X-Agent-Rationale": "Try restoring scene"},
+        json={"snapshot_id": snap_id},
+    )
+    assert res_denied.status_code == 403
+    assert res_denied.json()["detail"]["error"] == "ForbiddenByPolicy"
+    assert "ha_system_restore_backup" in res_denied.json()["detail"]["rule_violated"]
+
+    # 2. Admin restores snapshot -> 200 OK
+    res_allowed = client.post(
+        "/api/v1/backup/restore",
+        headers={**auth_headers, "X-Agent-Rationale": "Admin rollback scene"},
+        json={"snapshot_id": snap_id},
+    )
+    assert res_allowed.status_code == 200
+    assert res_allowed.json()["success"] is True
+
+    # Verify audit logs
+    audit_file = temp_config_dir / ".audit" / "audit.jsonl"
+    lines = [json.loads(line) for line in audit_file.read_text(encoding="utf-8").strip().splitlines()]
+
+    # Denied restore event
+    denied_evs = [e for e in lines if e.get("agent_id") == "designer_user" and e.get("status") == "denied_policy" and e.get("action") == "backup_restore"]
+    assert len(denied_evs) == 1
+    assert denied_evs[0]["tool"] == "ha_system_restore_backup"
+    assert denied_evs[0]["target"] == snap_id
+
+    # Allowed restore event
+    allowed_evs = [e for e in lines if e.get("agent_id") == "master" and e.get("status") == "allowed" and e.get("action") == "backup_restore"]
+    assert len(allowed_evs) == 1
+    assert allowed_evs[0]["snapshot_id"] == snap_id
+    assert allowed_evs[0]["rationale"] == "Admin rollback scene"
+
+
+def test_file_and_backup_internal_server_errors_500(client, auth_headers, monkeypatch):
+    """500 Internal Server Error handling for unexpected failures in file and backup endpoints."""
+    from app.services.file_service import FileService
+    from app.services.snapshot_service import SnapshotService
+
+    # 1. read_file 500 error
+    monkeypatch.setattr(FileService, "read_file", staticmethod(lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("Disk I/O failure"))))
+    res_read = client.post("/api/v1/file/read", headers=auth_headers, json={"path": "automations.yaml"})
+    assert res_read.status_code == 500
+    assert "Disk I/O failure" in res_read.json()["detail"]
+
+    # 2. write_file 500 error
+    monkeypatch.setattr(FileService, "write_file", staticmethod(lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("Write lock failed"))))
+    res_write = client.post("/api/v1/file/write", headers=auth_headers, json={"path": "automations.yaml", "content": "- alias: A\n"})
+    assert res_write.status_code == 500
+    assert "Write lock failed" in res_write.json()["detail"]
+
+    # 3. restore_backup 500 error
+    monkeypatch.setattr(SnapshotService, "restore_snapshot", staticmethod(lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("Corrupted backup file"))))
+    res_restore = client.post("/api/v1/backup/restore", headers=auth_headers, json={"snapshot_id": "snap_valid_id"})
+    assert res_restore.status_code == 500
+    assert "Corrupted backup file" in res_restore.json()["detail"]
+
+
+def test_security_violation_audit_logging(client, auth_headers, temp_config_dir, monkeypatch):
+    """SecurityException during file or backup operations records denied_security audit event."""
+    import json
+    from app.services.file_service import FileService
+    from app.services.snapshot_service import SnapshotService
+    from app.core.security import SecurityException
+
+    # Mock SecurityException in FileService.read_file
+    monkeypatch.setattr(FileService, "read_file", staticmethod(lambda *a, **kw: (_ for _ in ()).throw(SecurityException("Jail escape attempted in read"))))
+    res_read = client.post("/api/v1/file/read", headers=auth_headers, json={"path": "automations.yaml"})
+    assert res_read.status_code == 403
+
+    # Mock SecurityException in FileService.write_file
+    monkeypatch.setattr(FileService, "write_file", staticmethod(lambda *a, **kw: (_ for _ in ()).throw(SecurityException("Jail escape attempted in write"))))
+    res_write = client.post("/api/v1/file/write", headers=auth_headers, json={"path": "automations.yaml", "content": "- alias: A\n"})
+    assert res_write.status_code == 403
+
+    # Direct test of backup restore with invalid snapshot ID causing SecurityException
+    res_restore = client.post("/api/v1/backup/restore", headers=auth_headers, json={"snapshot_id": "../../etc/shadow"})
+    assert res_restore.status_code == 403
+
+    # Verify audit logs have denied_security entries
+    audit_file = temp_config_dir / ".audit" / "audit.jsonl"
+    lines = [json.loads(line) for line in audit_file.read_text(encoding="utf-8").strip().splitlines()]
+    sec_events = [e for e in lines if e.get("status") == "denied_security"]
+    assert len(sec_events) >= 3
+
+
+
