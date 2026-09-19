@@ -428,7 +428,7 @@ roles:
     allowed, _ = engine.check_path_permission("glob_tester", "dashboards/view1.yaml")
     assert allowed is True
     allowed, _ = engine.check_path_permission("glob_tester", "dashboards/view12.yaml")
-    assert blocked is False if (blocked := engine.check_path_permission("glob_tester", "dashboards/view12.yaml")[0]) else True
+    assert allowed is False
 
     # "." target and pattern (lines 153, 156, 163)
     allowed, _ = engine.check_path_permission("glob_tester", ".")
@@ -477,6 +477,14 @@ roles:
       - "dashboards/**"
     allow_services:
       - "light.*"
+    deny_tools:
+      - "ha_automation_write"
+    deny_paths:
+      - "secrets.yaml"
+    deny_services:
+      - "homeassistant.restart"
+    read_only_paths:
+      - "configuration.yaml"
 """
     policy_file = tmp_path / "ha_ai_policies.yaml"
     policy_file.write_text(custom_yaml, encoding="utf-8")
@@ -486,6 +494,54 @@ roles:
     assert config.roles["admin"].allow_tools == ["*"]
     assert config.roles["admin"].allow_paths == ["*"]
     assert config.roles["admin"].allow_services == ["*"]
+    assert config.roles["admin"].deny_tools == []
+    assert config.roles["admin"].deny_paths == []
+    assert config.roles["admin"].deny_services == []
+    assert config.roles["admin"].read_only_paths == []
+
+    # Verify admin permissions are fully unrestricted despite YAML deny lists
+    allowed, _ = engine.check_tool_permission("admin", "ha_automation_write")
+    assert allowed is True
+
+    allowed, _ = engine.check_path_permission("admin", "secrets.yaml", is_write=True)
+    assert allowed is True
+
+    allowed, _ = engine.check_path_permission("admin", "configuration.yaml", is_write=True)
+    assert allowed is True
+
+    allowed, _ = engine.check_service_permission("admin", "homeassistant", "restart")
+    assert allowed is True
+
+
+def test_check_path_permission_traversal_blocked(tmp_path: Path):
+    custom_yaml = """
+version: "1.0"
+roles:
+  designer:
+    description: "Designer"
+    allow_paths:
+      - "dashboards/**"
+      - "../traversal_pattern/**"
+"""
+    policy_file = tmp_path / "ha_ai_policies.yaml"
+    policy_file.write_text(custom_yaml, encoding="utf-8")
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+
+    # Path traversal in target path should be blocked even when matching glob prefix
+    allowed, reason = engine.check_path_permission("designer", "dashboards/../../secrets.yaml")
+    assert allowed is False
+    assert "not permitted" in reason.lower()
+
+    allowed, _ = engine.check_path_permission("designer", r"dashboards\..\..\secrets.yaml")
+    assert allowed is False
+
+    allowed, _ = engine.check_path_permission("designer", "dashboards/../dashboards/main.yaml")
+    assert allowed is False
+
+    # Traversal in pattern should also be rejected
+    allowed, _ = engine.check_path_permission("designer", "traversal_pattern/file.yaml")
+    assert allowed is False
+
 
 
 

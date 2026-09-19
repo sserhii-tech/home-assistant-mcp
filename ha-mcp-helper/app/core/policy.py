@@ -148,10 +148,15 @@ def _path_pattern_to_regex(pattern: str) -> str:
 
 
 def _match_path_pattern(pattern: str, target_path: str) -> bool:
-    posix_target = PurePosixPath(str(target_path).replace("\\", "/")).as_posix().lstrip("/")
+    pure_target = PurePosixPath(str(target_path).replace("\\", "/"))
+    pure_pattern = PurePosixPath(str(pattern).replace("\\", "/"))
+    if ".." in pure_target.parts or ".." in pure_pattern.parts:
+        return False
+
+    posix_target = pure_target.as_posix().lstrip("/")
     if posix_target == ".":
         posix_target = ""
-    posix_pattern = PurePosixPath(str(pattern).replace("\\", "/")).as_posix().lstrip("/")
+    posix_pattern = pure_pattern.as_posix().lstrip("/")
     if posix_pattern == ".":
         posix_pattern = ""
 
@@ -226,6 +231,10 @@ class PolicyEngine:
                 admin_role.allow_paths = ["*"]
             if "*" not in admin_role.allow_services:
                 admin_role.allow_services = ["*"]
+            admin_role.deny_tools = []
+            admin_role.deny_paths = []
+            admin_role.deny_services = []
+            admin_role.read_only_paths = []
 
         self._last_mtime = mtime
         self._cached_config = parsed_config
