@@ -73,3 +73,57 @@ class AuditService:
         first_backup = self.audit_dir / "audit.jsonl.1"
         self.log_file.rename(first_backup)
 
+    def query_logs(
+        self,
+        agent_id: str | None = None,
+        role: str | None = None,
+        status: AuditStatus | str | None = None,
+        limit: int = 50,
+        since: str | None = None,
+    ) -> list[AuditEvent]:
+        if limit <= 0:
+            return []
+
+        files_to_check = [self.log_file]
+        for i in range(1, self.backup_count + 1):
+            files_to_check.append(self.audit_dir / f"audit.jsonl.{i}")
+
+        results: list[AuditEvent] = []
+
+        with self._lock:
+            for file_path in files_to_check:
+                if not file_path.exists():
+                    continue
+
+                try:
+                    with file_path.open("r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                except OSError:
+                    continue
+
+                for raw_line in reversed(lines):
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+
+                    try:
+                        event = AuditEvent.model_validate_json(line)
+                    except Exception:
+                        continue
+
+                    if agent_id is not None and event.agent_id != agent_id:
+                        continue
+                    if role is not None and event.role != role:
+                        continue
+                    if status is not None and event.status != status:
+                        continue
+                    if since is not None and event.timestamp < since:
+                        continue
+
+                    results.append(event)
+                    if len(results) >= limit:
+                        return results
+
+        return results
+
+

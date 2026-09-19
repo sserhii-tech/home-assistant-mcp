@@ -215,3 +215,198 @@ def test_rotate_logs_when_log_file_does_not_exist(tmp_path: Path):
     assert not service.log_file.exists()
 
 
+def test_query_logs_filters_and_ordering(tmp_path: Path):
+    service = AuditService(audit_dir=tmp_path)
+    e1 = AuditEvent(
+        id="aud_1",
+        timestamp="2026-09-19T10:00:00Z",
+        agent_id="agent_a",
+        role="operator",
+        action="read",
+        tool="ha_system_health",
+        target="system",
+        status="allowed",
+        reason="ok",
+    )
+    e2 = AuditEvent(
+        id="aud_2",
+        timestamp="2026-09-19T11:00:00Z",
+        agent_id="agent_b",
+        role="designer",
+        action="write",
+        tool="ha_dashboard_save_config",
+        target="dashboards/main.yaml",
+        status="denied_policy",
+        reason="policy denied",
+    )
+    e3 = AuditEvent(
+        id="aud_3",
+        timestamp="2026-09-19T12:00:00Z",
+        agent_id="agent_a",
+        role="operator",
+        action="write",
+        tool="ha_automation_write",
+        target="automations.yaml",
+        status="denied_security",
+        reason="security denied",
+    )
+    e4 = AuditEvent(
+        id="aud_4",
+        timestamp="2026-09-19T13:00:00Z",
+        agent_id="agent_c",
+        role="admin",
+        action="call",
+        tool="ha_system_call_service",
+        target="light.turn_on",
+        status="allowed",
+        reason="admin override",
+    )
+
+    for e in [e1, e2, e3, e4]:
+        service.log_event(e)
+
+    # 1. Default ordering (reverse chronological: e4, e3, e2, e1)
+    results = service.query_logs()
+    assert [r.id for r in results] == ["aud_4", "aud_3", "aud_2", "aud_1"]
+
+    # 2. Filter by agent_id
+    results = service.query_logs(agent_id="agent_a")
+    assert [r.id for r in results] == ["aud_3", "aud_1"]
+
+    # 3. Filter by role
+    results = service.query_logs(role="designer")
+    assert [r.id for r in results] == ["aud_2"]
+
+    # 4. Filter by status
+    results = service.query_logs(status="allowed")
+    assert [r.id for r in results] == ["aud_4", "aud_1"]
+
+    # 5. Filter by since
+    results = service.query_logs(since="2026-09-19T11:30:00Z")
+    assert [r.id for r in results] == ["aud_4", "aud_3"]
+
+    # 6. Combined filter and limit
+    results = service.query_logs(status="allowed", limit=1)
+    assert len(results) == 1
+    assert results[0].id == "aud_4"
+
+
+def test_query_logs_searches_across_rotated_files(tmp_path: Path):
+    service = AuditService(audit_dir=tmp_path, max_bytes=200, backup_count=10)
+    for i in range(10):
+        service.log_event(
+            AuditEvent(
+                id=f"aud_{i}",
+                timestamp=f"2026-09-19T10:0{i}:00Z",
+                agent_id=f"bot_{i}",
+                role="admin",
+                action="call",
+                tool="tool",
+                target="tgt",
+                status="allowed",
+                reason=f"Event {i}",
+            )
+        )
+
+    # All 10 events should be returned in reverse chronological order
+    results = service.query_logs(limit=20)
+    assert len(results) == 10
+    assert [r.id for r in results] == [f"aud_{i}" for i in range(9, -1, -1)]
+
+    # Query with filter matching only one event in a rotated file
+    results = service.query_logs(agent_id="bot_2")
+    assert len(results) == 1
+    assert results[0].id == "aud_2"
+
+    # Query with small limit stops early across rotated files
+    results = service.query_logs(limit=3)
+    assert [r.id for r in results] == ["aud_9", "aud_8", "aud_7"]
+
+
+def test_query_logs_corrupted_lines_resilience(tmp_path: Path):
+    service = AuditService(audit_dir=tmp_path)
+    valid_event = AuditEvent(
+        id="aud_valid_1",
+        timestamp="2026-09-19T10:00:00Z",
+        agent_id="bot",
+        role="role",
+        action="act",
+        tool="tool",
+        target="tgt",
+        status="allowed",
+        reason="ok",
+    )
+    service.log_event(valid_event)
+
+    # Append corrupted JSON, blank lines, and incomplete object to log file
+    with service.log_file.open("a", encoding="utf-8") as f:
+        f.write("\n")
+        f.write("   \n")
+        f.write("NOT_JSON_AT_ALL\n")
+        f.write('{"incomplete": "json"}\n')
+
+    valid_event_2 = AuditEvent(
+        id="aud_valid_2",
+        timestamp="2026-09-19T11:00:00Z",
+        agent_id="bot",
+        role="role",
+        action="act",
+        tool="tool",
+        target="tgt",
+        status="allowed",
+        reason="ok2",
+    )
+    service.log_event(valid_event_2)
+
+    results = service.query_logs()
+    assert len(results) == 2
+    assert [r.id for r in results] == ["aud_valid_2", "aud_valid_1"]
+
+
+def test_query_logs_limit_zero_or_negative(tmp_path: Path):
+    service = AuditService(audit_dir=tmp_path)
+    service.log_event(
+        AuditEvent(
+            agent_id="bot",
+            role="role",
+            action="act",
+            tool="tool",
+            target="tgt",
+            status="allowed",
+            reason="ok",
+        )
+    )
+    assert service.query_logs(limit=0) == []
+    assert service.query_logs(limit=-1) == []
+
+
+def test_query_logs_non_existent_files(tmp_path: Path):
+    service = AuditService(audit_dir=tmp_path / "non_existent_subdir")
+    assert service.query_logs() == []
+
+
+def test_query_logs_oserror_handled_gracefully(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    service = AuditService(audit_dir=tmp_path)
+    service.log_event(
+        AuditEvent(
+            agent_id="bot",
+            role="role",
+            action="act",
+            tool="tool",
+            target="tgt",
+            status="allowed",
+            reason="ok",
+        )
+    )
+    original_open = Path.open
+
+    def mock_open(self, *args, **kwargs):
+        if "audit.jsonl" in str(self):
+            raise OSError("Simulated disk error")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", mock_open)
+    assert service.query_logs() == []
+
+
+
