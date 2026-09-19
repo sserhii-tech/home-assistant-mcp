@@ -78,6 +78,9 @@ def test_endpoints_require_auth(client):
         ("GET", "/api/v1/backup/list", None),
         ("POST", "/api/v1/backup/restore", {"snapshot_id": "dummy"}),
         ("GET", "/api/v1/logs/tail", None),
+        ("POST", "/api/v1/agent/token", {"agent_id": "a", "role": "admin"}),
+        ("GET", "/api/v1/agent/policies", None),
+        ("GET", "/api/v1/audit/logs", None),
     ]
     for method, path, body in endpoints:
         if method == "GET":
@@ -397,4 +400,211 @@ def test_backup_restore_new_file_deletes_file(client, auth_headers, temp_config_
     )
     assert restore_res.status_code == 200
     assert not new_file.exists()
+
+
+# ---------------------------------------------------------------------------
+# 7. Agent & Audit Endpoint Tests
+# ---------------------------------------------------------------------------
+
+def test_issue_token_endpoint_admin_success(client, auth_headers, temp_config_dir):
+    """Admin issues ephemeral token, receives valid response, and audit log is created."""
+    res = client.post(
+        "/api/v1/agent/token",
+        headers={**auth_headers, "X-Agent-Rationale": "Issue token for UI designer bot"},
+        json={"agent_id": "designer_bot", "role": "dashboard_designer", "ttl_minutes": 120},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["agent_id"] == "designer_bot"
+    assert data["role"] == "dashboard_designer"
+    assert data["token"].startswith("sec_agent_ephem_")
+    assert "expires_at" in data
+
+    # Verify audit event in .audit/audit.jsonl
+    audit_file = temp_config_dir / ".audit" / "audit.jsonl"
+    assert audit_file.exists()
+    audit_lines = audit_file.read_text(encoding="utf-8").strip().splitlines()
+    assert len(audit_lines) >= 1
+    import json
+    last_event = json.loads(audit_lines[-1])
+    assert last_event["agent_id"] == "master"
+    assert last_event["role"] == "admin"
+    assert last_event["action"] == "token_issue"
+    assert last_event["tool"] == "ha_agent_issue_token"
+    assert last_event["target"] == "designer_bot"
+    assert last_event["status"] == "allowed"
+    assert last_event["rationale"] == "Issue token for UI designer bot"
+
+
+def test_issue_token_non_admin_forbidden(client, auth_headers):
+    """Non-admin role attempting to issue a token is rejected with 403 Forbidden."""
+    # First, admin issues a token for a non-admin role (dashboard_designer)
+    res_token = client.post(
+        "/api/v1/agent/token",
+        headers=auth_headers,
+        json={"agent_id": "designer_agent", "role": "dashboard_designer", "ttl_minutes": 60},
+    )
+    assert res_token.status_code == 200
+    non_admin_token = res_token.json()["token"]
+
+    # Attempt to issue another token using the non-admin credentials
+    res = client.post(
+        "/api/v1/agent/token",
+        headers={"X-Addon-API-Key": non_admin_token},
+        json={"agent_id": "another_bot", "role": "guest", "ttl_minutes": 30},
+    )
+    assert res.status_code == 403
+    data = res.json()
+    assert data["detail"]["error"] == "ForbiddenByPolicy"
+    assert "Only admin can issue tokens" in data["detail"]["message"]
+
+
+def test_issue_token_invalid_role_or_ttl_returns_400(client, auth_headers):
+    """Invalid role name or out-of-range TTL returns 400 Bad Request."""
+    # Invalid role
+    res_bad_role = client.post(
+        "/api/v1/agent/token",
+        headers=auth_headers,
+        json={"agent_id": "bot1", "role": "non_existent_role", "ttl_minutes": 60},
+    )
+    assert res_bad_role.status_code == 400
+    assert "Role 'non_existent_role' is not defined" in res_bad_role.json().get("detail", "")
+
+    # Invalid TTL (0)
+    res_bad_ttl_zero = client.post(
+        "/api/v1/agent/token",
+        headers=auth_headers,
+        json={"agent_id": "bot2", "role": "dashboard_designer", "ttl_minutes": 0},
+    )
+    assert res_bad_ttl_zero.status_code == 400
+
+    # Invalid TTL (>1440)
+    res_bad_ttl_high = client.post(
+        "/api/v1/agent/token",
+        headers=auth_headers,
+        json={"agent_id": "bot3", "role": "dashboard_designer", "ttl_minutes": 2000},
+    )
+    assert res_bad_ttl_high.status_code == 400
+
+
+def test_get_agent_policies_endpoint(client, auth_headers, temp_config_dir):
+    """Endpoint returns active roles and agent summaries with secret tokens redacted."""
+    # Create custom policy file with configured agent having a secret token
+    policy_file = temp_config_dir / "ha_ai_policies.yaml"
+    policy_content = """version: "1.0"
+roles:
+  admin:
+    description: "Full administrative access"
+    allow_tools: ["*"]
+    allow_paths: ["*"]
+    allow_services: ["*"]
+  guest:
+    description: "Minimal read-only inspection"
+    allow_tools: ["ha_system_list_entities"]
+agents:
+  secret_bot:
+    role: "guest"
+    token: "super_secret_agent_token_value_xyz"
+    description: "Configured secret bot"
+"""
+    policy_file.write_text(policy_content, encoding="utf-8")
+
+    res = client.get("/api/v1/agent/policies", headers=auth_headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert "roles" in data
+    assert "admin" in data["roles"]
+    assert "guest" in data["roles"]
+    assert "agents" in data
+    assert "secret_bot" in data["agents"]
+    # Verify agent summary fields
+    agent_info = data["agents"]["secret_bot"]
+    assert agent_info["role"] == "guest"
+    assert agent_info["description"] == "Configured secret bot"
+    # Ensure raw secret token is NOT exposed
+    assert "token" not in agent_info
+    raw_response = res.text
+    assert "super_secret_agent_token_value_xyz" not in raw_response
+
+
+def test_get_audit_logs_endpoint(client, auth_headers, temp_config_dir):
+    """Filter audit logs by agent_id, status, role, since, and limit."""
+    import json
+    audit_dir = temp_config_dir / ".audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    audit_file = audit_dir / "audit.jsonl"
+    events = [
+        {"id": "aud_1", "timestamp": "2026-09-01T10:00:00+00:00", "agent_id": "bot_a", "role": "dashboard_designer", "action": "file_read", "tool": "ha_dashboard_get_config", "target": "ui-lovelace.yaml", "status": "allowed", "reason": "ok", "rationale": "", "snapshot_id": "", "client_ip": ""},
+        {"id": "aud_2", "timestamp": "2026-09-01T11:00:00+00:00", "agent_id": "bot_a", "role": "dashboard_designer", "action": "file_write", "tool": "ha_dashboard_save_config", "target": "ui-lovelace.yaml", "status": "allowed", "reason": "ok", "rationale": "", "snapshot_id": "snap_1", "client_ip": ""},
+        {"id": "aud_3", "timestamp": "2026-09-01T12:00:00+00:00", "agent_id": "bot_b", "role": "automation_builder", "action": "file_write", "tool": "ha_automation_write", "target": "automations.yaml", "status": "denied_policy", "reason": "denied", "rationale": "", "snapshot_id": "", "client_ip": ""},
+    ]
+    with audit_file.open("w", encoding="utf-8") as f:
+        for ev in events:
+            f.write(json.dumps(ev) + "\n")
+
+    # Query all
+    res_all = client.get("/api/v1/audit/logs", headers=auth_headers)
+    assert res_all.status_code == 200
+    data_all = res_all.json()
+    assert data_all["total_events"] == 3
+    assert len(data_all["events"]) == 3
+
+    # Query with agent_id filter
+    res_bot_a = client.get("/api/v1/audit/logs?agent_id=bot_a", headers=auth_headers)
+    assert res_bot_a.status_code == 200
+    assert res_bot_a.json()["total_events"] == 2
+
+    # Query with role filter
+    res_role = client.get("/api/v1/audit/logs?role=automation_builder", headers=auth_headers)
+    assert res_role.status_code == 200
+    assert res_role.json()["total_events"] == 1
+    assert res_role.json()["events"][0]["agent_id"] == "bot_b"
+
+    # Query with status filter
+    res_denied = client.get("/api/v1/audit/logs?status=denied_policy", headers=auth_headers)
+    assert res_denied.status_code == 200
+    assert res_denied.json()["total_events"] == 1
+
+    # Query with limit
+    res_limit = client.get("/api/v1/audit/logs?limit=1", headers=auth_headers)
+    assert res_limit.status_code == 200
+    assert res_limit.json()["total_events"] == 1
+
+    # Query with since filter
+    res_since = client.get("/api/v1/audit/logs?since=2026-09-01T11:30:00%2B00:00", headers=auth_headers)
+    assert res_since.status_code == 200
+    assert res_since.json()["total_events"] == 1
+    assert res_since.json()["events"][0]["id"] == "aud_3"
+
+
+def test_get_audit_logs_unauthorized_role_forbidden(client, auth_headers, temp_config_dir):
+    """Role without ha_audit_get_logs permission (e.g. guest) is rejected with 403 and logged."""
+    # Issue a token for role 'guest' (which does NOT have ha_audit_get_logs in default policy)
+    res_token = client.post(
+        "/api/v1/agent/token",
+        headers=auth_headers,
+        json={"agent_id": "guest_user", "role": "guest", "ttl_minutes": 60},
+    )
+    assert res_token.status_code == 200
+    guest_token = res_token.json()["token"]
+
+    # Attempt to query audit logs with guest token
+    res = client.get("/api/v1/audit/logs", headers={"X-Addon-API-Key": guest_token})
+    assert res.status_code == 403
+    data = res.json()
+    assert data["detail"]["error"] == "ForbiddenByPolicy"
+    assert "ha_audit_get_logs" in data["detail"]["rule_violated"]
+
+    # Verify a denied_policy audit event was recorded
+    audit_file = temp_config_dir / ".audit" / "audit.jsonl"
+    assert audit_file.exists()
+    import json
+    lines = [json.loads(line) for line in audit_file.read_text(encoding="utf-8").strip().splitlines()]
+    denied_events = [e for e in lines if e.get("status") == "denied_policy" and e.get("tool") == "ha_audit_get_logs"]
+    assert len(denied_events) >= 1
+    assert denied_events[-1]["agent_id"] == "guest_user"
+    assert denied_events[-1]["role"] == "guest"
+    assert denied_events[-1]["action"] == "log_query"
+    assert denied_events[-1]["target"] == "audit_logs"
+
 
