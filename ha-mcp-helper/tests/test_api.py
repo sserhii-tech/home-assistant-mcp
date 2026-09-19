@@ -436,8 +436,9 @@ def test_issue_token_endpoint_admin_success(client, auth_headers, temp_config_di
     assert last_event["rationale"] == "Issue token for UI designer bot"
 
 
-def test_issue_token_non_admin_forbidden(client, auth_headers):
-    """Non-admin role attempting to issue a token is rejected with 403 Forbidden."""
+def test_issue_token_non_admin_forbidden(client, auth_headers, temp_config_dir):
+    """Non-admin role attempting to issue a token is rejected with 403 Forbidden and logged."""
+    import json
     # First, admin issues a token for a non-admin role (dashboard_designer)
     res_token = client.post(
         "/api/v1/agent/token",
@@ -450,13 +451,26 @@ def test_issue_token_non_admin_forbidden(client, auth_headers):
     # Attempt to issue another token using the non-admin credentials
     res = client.post(
         "/api/v1/agent/token",
-        headers={"X-Addon-API-Key": non_admin_token},
+        headers={"X-Addon-API-Key": non_admin_token, "X-Agent-Rationale": "Try create rogue token"},
         json={"agent_id": "another_bot", "role": "guest", "ttl_minutes": 30},
     )
     assert res.status_code == 403
     data = res.json()
     assert data["detail"]["error"] == "ForbiddenByPolicy"
     assert "Only admin can issue tokens" in data["detail"]["message"]
+
+    # Verify a denied_policy audit event was recorded for token_issue
+    audit_file = temp_config_dir / ".audit" / "audit.jsonl"
+    assert audit_file.exists()
+    lines = [json.loads(line) for line in audit_file.read_text(encoding="utf-8").strip().splitlines()]
+    denied_events = [
+        e for e in lines
+        if e.get("status") == "denied_policy" and e.get("action") == "token_issue" and e.get("target") == "another_bot"
+    ]
+    assert len(denied_events) == 1
+    assert denied_events[0]["agent_id"] == "designer_agent"
+    assert denied_events[0]["role"] == "dashboard_designer"
+    assert denied_events[0]["rationale"] == "Try create rogue token"
 
 
 def test_issue_token_invalid_role_or_ttl_returns_400(client, auth_headers):
@@ -588,14 +602,17 @@ def test_get_audit_logs_unauthorized_role_forbidden(client, auth_headers, temp_c
     assert res_token.status_code == 200
     guest_token = res_token.json()["token"]
 
-    # Attempt to query audit logs with guest token
-    res = client.get("/api/v1/audit/logs", headers={"X-Addon-API-Key": guest_token})
+    # Attempt to query audit logs with guest token and rationale
+    res = client.get(
+        "/api/v1/audit/logs",
+        headers={"X-Addon-API-Key": guest_token, "X-Agent-Rationale": "Guest audit inspection"},
+    )
     assert res.status_code == 403
     data = res.json()
     assert data["detail"]["error"] == "ForbiddenByPolicy"
     assert "ha_audit_get_logs" in data["detail"]["rule_violated"]
 
-    # Verify a denied_policy audit event was recorded
+    # Verify a denied_policy audit event was recorded with rationale
     audit_file = temp_config_dir / ".audit" / "audit.jsonl"
     assert audit_file.exists()
     import json
@@ -606,6 +623,8 @@ def test_get_audit_logs_unauthorized_role_forbidden(client, auth_headers, temp_c
     assert denied_events[-1]["role"] == "guest"
     assert denied_events[-1]["action"] == "log_query"
     assert denied_events[-1]["target"] == "audit_logs"
+    assert denied_events[-1]["rationale"] == "Guest audit inspection"
+
 
 
 # ---------------------------------------------------------------------------

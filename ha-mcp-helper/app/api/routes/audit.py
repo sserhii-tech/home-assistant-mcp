@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from ...core.dependencies import (
+    get_agent_rationale,
     get_audit_service,
     get_current_principal,
     get_policy_engine,
@@ -24,6 +25,7 @@ def get_audit_logs(
     principal: tuple[str, str] = Depends(get_current_principal),
     policy_engine: PolicyEngine = Depends(get_policy_engine),
     audit_service: AuditService = Depends(get_audit_service),
+    rationale: str = Depends(get_agent_rationale),
 ) -> AuditLogsResponse:
     """Query structured audit trail logs with filtering and role permission checks."""
     caller_agent_id, caller_role = principal
@@ -39,6 +41,7 @@ def get_audit_logs(
                 target="audit_logs",
                 status="denied_policy",
                 reason=reason,
+                rationale=rationale,
             )
         )
         raise HTTPException(

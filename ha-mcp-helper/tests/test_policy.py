@@ -709,6 +709,24 @@ def test_ephemeral_token_invalid_timestamp_or_naive(tmp_path: Path):
     assert token_obj.token not in engine._ephemeral_tokens
 
 
+def test_issue_token_purges_unresolved_expired_tokens(tmp_path: Path):
+    from datetime import datetime, timedelta, timezone
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+
+    # Issue token 1 and manually backdate its expiry
+    token1 = engine.issue_token(agent_id="bot1", role="guest", ttl_minutes=10)
+    engine._ephemeral_tokens[token1.token].expires_at = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+
+    # Issue token 2 (without ever resolving token 1)
+    token2 = engine.issue_token(agent_id="bot2", role="guest", ttl_minutes=10)
+
+    # Token 1 should have been automatically purged during token 2 issuance
+    assert token1.token not in engine._ephemeral_tokens
+    assert token2.token in engine._ephemeral_tokens
+
+
+
+
 
 
 

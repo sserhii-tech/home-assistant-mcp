@@ -252,6 +252,22 @@ class PolicyEngine:
         self._cached_config = parsed_config
         return self._cached_config
 
+    def _purge_expired_tokens_locked(self) -> None:
+        """Purge all expired or corrupted ephemeral tokens under lock."""
+        now_utc = datetime.now(timezone.utc)
+        expired = []
+        for token_str, ephem in self._ephemeral_tokens.items():
+            try:
+                exp_dt = datetime.fromisoformat(ephem.expires_at)
+                if exp_dt.tzinfo is None:
+                    exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                if exp_dt <= now_utc:
+                    expired.append(token_str)
+            except Exception:
+                expired.append(token_str)
+        for token_str in expired:
+            del self._ephemeral_tokens[token_str]
+
     def issue_token(self, agent_id: str, role: str, ttl_minutes: int = 60) -> EphemeralToken:
         config = self.load_policies()
         if role not in config.roles:
@@ -270,6 +286,7 @@ class PolicyEngine:
             created_at=now_utc.isoformat(),
         )
         with self._token_lock:
+            self._purge_expired_tokens_locked()
             self._ephemeral_tokens[token_str] = ephem_obj
         return ephem_obj
 
@@ -286,20 +303,10 @@ class PolicyEngine:
 
         # 2. Ephemeral tokens check
         with self._token_lock:
+            self._purge_expired_tokens_locked()
             if token in self._ephemeral_tokens:
                 ephem = self._ephemeral_tokens[token]
-                try:
-                    exp_dt = datetime.fromisoformat(ephem.expires_at)
-                    if exp_dt.tzinfo is None:
-                        exp_dt = exp_dt.replace(tzinfo=timezone.utc)
-                    if datetime.now(timezone.utc) < exp_dt:
-                        return (ephem.agent_id, ephem.role)
-                    else:
-                        del self._ephemeral_tokens[token]
-                        return (None, None)
-                except Exception:
-                    del self._ephemeral_tokens[token]
-                    return (None, None)
+                return (ephem.agent_id, ephem.role)
 
         # 3. Configured agents check
         config = self.load_policies()
@@ -311,6 +318,7 @@ class PolicyEngine:
                 return (agent_id, agent.role)
 
         return (None, None)
+
 
 
     def check_tool_permission(self, role: str, tool_name: str) -> tuple[bool, str]:

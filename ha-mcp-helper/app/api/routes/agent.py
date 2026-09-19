@@ -31,6 +31,18 @@ def issue_agent_token(
     """Issue a scoped ephemeral token for sub-agents (admin only)."""
     agent_id, role = principal
     if role != "admin":
+        audit_service.log_event(
+            AuditEvent(
+                agent_id=agent_id,
+                role=role,
+                action="token_issue",
+                tool="ha_agent_issue_token",
+                target=req.agent_id,
+                status="denied_policy",
+                reason="Only admin can issue tokens",
+                rationale=rationale,
+            )
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
