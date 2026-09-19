@@ -308,6 +308,7 @@ describe("AddonClient", () => {
                 status: "allowed",
                 reason: "Allowed by role",
                 rationale: req.headers["x-agent-rationale"] || "Update cards",
+                client_ip: "127.0.0.1",
               },
             ],
           })
@@ -343,8 +344,26 @@ describe("AddonClient", () => {
         res.end(
           JSON.stringify({
             roles: {
-              admin: { description: "Full admin access", allow_tools: ["*"] },
-              guest: { description: "Read-only access", allow_tools: ["ha_system_health"] },
+              admin: {
+                description: "Full admin access",
+                allow_tools: ["*"],
+                deny_tools: [],
+                allow_paths: ["**"],
+                deny_paths: [],
+                read_only_paths: [],
+                allow_services: ["*"],
+                deny_services: [],
+              },
+              guest: {
+                description: "Read-only access",
+                allow_tools: ["ha_system_health"],
+                deny_tools: [],
+                allow_paths: [],
+                deny_paths: [],
+                read_only_paths: ["**"],
+                allow_services: [],
+                deny_services: ["*"],
+              },
             },
             agents: {
               designer_bot: { role: "dashboard_designer", description: "UI designer" },
@@ -463,6 +482,7 @@ describe("AddonClient", () => {
     expect(res.total_events).toBe(1);
     expect(res.events[0].id).toBe("aud_123456789abc");
     expect(res.events[0].agent_id).toBe("bot_1");
+    expect(res.events[0].client_ip).toBe("127.0.0.1");
     expect(lastHeaders["x-agent-rationale"]).toBe("Audit inspection by lead admin");
     expect(lastReqUrl).toContain("agent_id=bot_1");
     expect(lastReqUrl).toContain("role=admin");
@@ -509,6 +529,9 @@ describe("AddonClient", () => {
     const policies = await client.getAgentPolicies();
     expect(policies.roles).toBeDefined();
     expect(policies.roles.admin.allow_tools).toEqual(["*"]);
+    expect(policies.roles.admin.allow_paths).toEqual(["**"]);
+    expect(policies.roles.admin.allow_services).toEqual(["*"]);
+    expect(policies.roles.guest.read_only_paths).toEqual(["**"]);
     expect(policies.agents.designer_bot.role).toBe("dashboard_designer");
   });
 });

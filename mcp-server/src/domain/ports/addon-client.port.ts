@@ -34,6 +34,7 @@ export interface AuditEvent {
   diff_summary?: string;
   snapshot_id?: string;
   rationale?: string;
+  client_ip?: string;
 }
 
 export interface AuditQueryParams {
@@ -68,8 +69,11 @@ export interface RoleDefinition {
   description?: string;
   allow_tools?: string[];
   deny_tools?: string[];
-  read_paths?: string[];
-  write_paths?: string[];
+  allow_paths?: string[];
+  deny_paths?: string[];
+  read_only_paths?: string[];
+  allow_services?: string[];
+  deny_services?: string[];
 }
 
 export interface AgentSummary {
