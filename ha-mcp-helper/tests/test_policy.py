@@ -198,6 +198,27 @@ def test_resolve_principal_no_master_key(tmp_path: Path):
     assert engine.resolve_principal("any_token") == (None, None)
 
 
+def test_resolve_principal_agent_with_empty_token(tmp_path: Path):
+    custom_yaml = """
+version: "1.0"
+roles:
+  tester:
+    allow_tools: ["*"]
+agents:
+  empty_token_bot:
+    role: "tester"
+    token: ""
+  valid_bot:
+    role: "tester"
+    token: "valid_token_123"
+"""
+    (tmp_path / "ha_ai_policies.yaml").write_text(custom_yaml, encoding="utf-8")
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+    
+    assert engine.resolve_principal("valid_token_123") == ("valid_bot", "tester")
+    assert engine.resolve_principal("non_existent") == (None, None)
+
+
 def test_check_tool_permission_admin_allows_all(tmp_path: Path):
     engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
     allowed, reason = engine.check_tool_permission("admin", "ha_system_call_service")
@@ -338,6 +359,22 @@ roles:
     # Nested subfolder does not match single star
     blocked, _ = engine.check_path_permission("flat_viewer", "dashboards/sub/living_room.yaml")
     assert blocked is False
+
+
+def test_check_path_permission_guest_role_read_only(tmp_path: Path):
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+    
+    # Guest role has read_only_paths: ["**"] and empty allow_paths
+    allowed_read, reason_read = engine.check_path_permission("guest", "configuration.yaml", is_write=False)
+    assert allowed_read is True
+    assert "read-only" in reason_read.lower()
+
+    allowed_read_sub, _ = engine.check_path_permission("guest", "dashboards/living_room.yaml", is_write=False)
+    assert allowed_read_sub is True
+
+    allowed_write, reason_write = engine.check_path_permission("guest", "configuration.yaml", is_write=True)
+    assert allowed_write is False
+    assert "read-only" in reason_write.lower()
 
 
 def test_check_service_permission_globs_and_deny(tmp_path: Path):

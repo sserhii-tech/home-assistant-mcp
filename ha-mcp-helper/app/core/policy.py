@@ -296,13 +296,17 @@ class PolicyEngine:
             if _match_path_pattern(pattern, path):
                 return (False, f"Path '{path}' explicitly denied for role '{role}'")
 
-        # 2. Read-only paths blocked if writing
+        # 2. Read-only paths: deny write operations; permit read operations
         if is_write:
             for pattern in role_def.read_only_paths:
                 if _match_path_pattern(pattern, path):
                     return (False, f"Path '{path}' is read-only for role '{role}'")
+        else:
+            for pattern in role_def.read_only_paths:
+                if _match_path_pattern(pattern, path):
+                    return (True, "Allowed by policy (read-only)")
 
-        # 3. Allow rules
+        # 3. Allow rules (general read/write access)
         for pattern in role_def.allow_paths:
             if _match_path_pattern(pattern, path):
                 return (True, "Allowed by policy")
