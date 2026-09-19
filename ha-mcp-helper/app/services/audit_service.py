@@ -53,5 +53,23 @@ class AuditService:
         return event
 
     def _rotate_logs(self) -> None:
-        pass
+        if not self.log_file.exists():
+            return
+
+        if self.backup_count <= 0:
+            self.log_file.unlink()
+            return
+
+        oldest = self.audit_dir / f"audit.jsonl.{self.backup_count}"
+        if oldest.exists():
+            oldest.unlink()
+
+        for i in range(self.backup_count - 1, 0, -1):
+            src = self.audit_dir / f"audit.jsonl.{i}"
+            dst = self.audit_dir / f"audit.jsonl.{i + 1}"
+            if src.exists():
+                src.rename(dst)
+
+        first_backup = self.audit_dir / "audit.jsonl.1"
+        self.log_file.rename(first_backup)
 

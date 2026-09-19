@@ -144,3 +144,74 @@ def test_audit_service_exports():
     assert ExportedAuditEvent is AuditEvent
 
 
+def test_log_rotation_on_max_bytes(tmp_path: Path):
+    # Set small max_bytes to trigger rotation quickly
+    service = AuditService(audit_dir=tmp_path, max_bytes=200, backup_count=3)
+
+    # Write events to exceed max_bytes multiple times
+    for i in range(10):
+        service.log_event(
+            AuditEvent(
+                agent_id=f"bot_{i}",
+                role="admin",
+                action="call",
+                tool="tool",
+                target="tgt",
+                status="allowed",
+                reason=f"Event {i}",
+            )
+        )
+
+    # Should have active audit.jsonl plus rotated files .1, .2, .3
+    assert (tmp_path / "audit.jsonl").exists()
+    assert (tmp_path / "audit.jsonl.1").exists()
+    assert (tmp_path / "audit.jsonl.2").exists()
+    assert (tmp_path / "audit.jsonl.3").exists()
+    assert not (tmp_path / "audit.jsonl.4").exists()
+
+
+def test_log_rotation_with_backup_count_zero(tmp_path: Path):
+    service = AuditService(audit_dir=tmp_path, max_bytes=100, backup_count=0)
+    for i in range(5):
+        service.log_event(
+            AuditEvent(
+                agent_id=f"bot_{i}",
+                role="admin",
+                action="call",
+                tool="tool",
+                target="tgt",
+                status="allowed",
+                reason=f"Event {i}",
+            )
+        )
+    assert (tmp_path / "audit.jsonl").exists()
+    assert not (tmp_path / "audit.jsonl.1").exists()
+
+
+def test_log_rotation_with_backup_count_one(tmp_path: Path):
+    service = AuditService(audit_dir=tmp_path, max_bytes=100, backup_count=1)
+    for i in range(5):
+        service.log_event(
+            AuditEvent(
+                agent_id=f"bot_{i}",
+                role="admin",
+                action="call",
+                tool="tool",
+                target="tgt",
+                status="allowed",
+                reason=f"Event {i}",
+            )
+        )
+    assert (tmp_path / "audit.jsonl").exists()
+    assert (tmp_path / "audit.jsonl.1").exists()
+    assert not (tmp_path / "audit.jsonl.2").exists()
+
+
+def test_rotate_logs_when_log_file_does_not_exist(tmp_path: Path):
+    service = AuditService(audit_dir=tmp_path, backup_count=3)
+    # log_file does not exist yet
+    assert not service.log_file.exists()
+    service._rotate_logs()
+    assert not service.log_file.exists()
+
+
