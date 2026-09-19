@@ -38,6 +38,18 @@ def test_models_instantiation():
     assert "test_role" in config.roles
     assert config.agents["agent_1"].token == "sec_agent_123"
 
+
+def test_policy_config_handles_none_for_roles_and_agents():
+    # Explicitly test the mode="before" field validator when None is passed
+    config = PolicyConfig(version="1.0", roles=None, agents=None)
+    assert config.roles == {}
+    assert config.agents == {}
+
+    # Test when valid dicts are passed
+    config2 = PolicyConfig(version="1.0", roles={}, agents={})
+    assert config2.roles == {}
+    assert config2.agents == {}
+
 def test_ensure_policy_file_creates_default_when_missing(tmp_path: Path):
     engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
     policy_file = tmp_path / "ha_ai_policies.yaml"
