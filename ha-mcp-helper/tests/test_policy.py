@@ -157,3 +157,44 @@ def test_load_policies_handles_empty_file_gracefully(tmp_path: Path):
     assert "admin" in config.roles
     assert config.roles["admin"].allow_tools == ["*"]
 
+
+def test_resolve_principal_master_key(tmp_path: Path):
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret_123")
+    agent_id, role = engine.resolve_principal("master_secret_123")
+    assert agent_id == "master"
+    assert role == "admin"
+
+
+def test_resolve_principal_scoped_agent_token(tmp_path: Path):
+    custom_yaml = """
+version: "1.0"
+roles:
+  designer:
+    description: "Designer"
+    allow_tools: ["ha_dashboard_*"]
+agents:
+  bot_designer:
+    role: "designer"
+    token: "sec_agent_designer_token"
+"""
+    policy_file = tmp_path / "ha_ai_policies.yaml"
+    policy_file.write_text(custom_yaml, encoding="utf-8")
+
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+    agent_id, role = engine.resolve_principal("sec_agent_designer_token")
+    assert agent_id == "bot_designer"
+    assert role == "designer"
+
+
+def test_resolve_principal_invalid_and_empty_tokens(tmp_path: Path):
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+    assert engine.resolve_principal(None) == (None, None)
+    assert engine.resolve_principal("") == (None, None)
+    assert engine.resolve_principal("invalid_token_999") == (None, None)
+
+
+def test_resolve_principal_no_master_key(tmp_path: Path):
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key=None)
+    assert engine.resolve_principal("any_token") == (None, None)
+
+

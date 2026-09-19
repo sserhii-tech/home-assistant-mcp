@@ -1,5 +1,6 @@
 """Role-Based Access Control (RBAC) policy engine and configuration loader."""
 
+import hmac
 import logging
 from pathlib import Path
 import yaml
@@ -171,3 +172,26 @@ class PolicyEngine:
         self._last_mtime = mtime
         self._cached_config = parsed_config
         return self._cached_config
+
+    def resolve_principal(self, token: str | None) -> tuple[str | None, str | None]:
+        if not token:
+            return (None, None)
+
+        # 1. Master API key check
+        if self.master_api_key and hmac.compare_digest(
+            str(token).encode("utf-8"),
+            str(self.master_api_key).encode("utf-8"),
+        ):
+            return ("master", "admin")
+
+        # 2. Configured agents check
+        config = self.load_policies()
+        for agent_id, agent in config.agents.items():
+            if agent.token and hmac.compare_digest(
+                str(token).encode("utf-8"),
+                str(agent.token).encode("utf-8"),
+            ):
+                return (agent_id, agent.role)
+
+        return (None, None)
+
