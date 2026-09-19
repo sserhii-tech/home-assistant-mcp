@@ -1,3 +1,4 @@
+import concurrent.futures
 import json
 import threading
 from pathlib import Path
@@ -407,6 +408,42 @@ def test_query_logs_oserror_handled_gracefully(tmp_path: Path, monkeypatch: pyte
 
     monkeypatch.setattr(Path, "open", mock_open)
     assert service.query_logs() == []
+
+
+def test_log_event_multithreaded_concurrency(tmp_path: Path):
+    audit_dir = tmp_path / "concurrent_rotation_audit"
+    service = AuditService(audit_dir=audit_dir, max_bytes=500, backup_count=50)
+
+    def write_event(i: int):
+        return service.log_event(
+            AuditEvent(
+                agent_id=f"bot_{i % 5}",
+                role="tester",
+                action="call",
+                tool="ha_test",
+                target=f"target_{i}",
+                status="allowed",
+                reason=f"Concurrent event {i:03d}",
+            )
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        events = list(executor.map(write_event, range(100)))
+
+    assert len(events) == 100
+
+    # Ensure multiple rotation files were created
+    rotated_files = list(audit_dir.glob("audit.jsonl.*"))
+    assert len(rotated_files) > 0
+
+    # Query all logs
+    logged_events = service.query_logs(limit=100)
+    assert len(logged_events) == 100
+
+    # Verify all 100 events were retrieved regardless of execution ordering
+    retrieved_reasons = {e.reason for e in logged_events}
+    expected_reasons = {f"Concurrent event {i:03d}" for i in range(100)}
+    assert retrieved_reasons == expected_reasons
 
 
 
