@@ -2,12 +2,44 @@
 
 import threading
 import uuid
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 from pydantic import BaseModel, Field
 
 AuditStatus = Literal["allowed", "denied_policy", "denied_security"]
+
+
+def _parse_iso_utc(ts: str) -> datetime | None:
+    """Parse an ISO 8601 timestamp string and convert to UTC datetime."""
+    try:
+        dt = datetime.fromisoformat(ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _reverse_read_lines(file_path: Path, block_size: int = 64 * 1024) -> Iterator[str]:
+    """Yield lines from a file in reverse order (bottom to top) in bounded chunks."""
+    with file_path.open("rb") as f:
+        f.seek(0, 2)
+        pos = f.tell()
+        buffer = b""
+        while pos > 0:
+            read_size = min(block_size, pos)
+            pos -= read_size
+            f.seek(pos)
+            chunk = f.read(read_size)
+            buffer = chunk + buffer
+            lines = buffer.split(b"\n")
+            for line in reversed(lines[1:]):
+                yield line.decode("utf-8", errors="replace")
+            buffer = lines[0]
+        if buffer:
+            yield buffer.decode("utf-8", errors="replace")
 
 
 class AuditEvent(BaseModel):
@@ -84,6 +116,8 @@ class AuditService:
         if limit <= 0:
             return []
 
+        since_dt = _parse_iso_utc(since) if since is not None else None
+
         files_to_check = [self.log_file]
         for i in range(1, self.backup_count + 1):
             files_to_check.append(self.audit_dir / f"audit.jsonl.{i}")
@@ -96,34 +130,38 @@ class AuditService:
                     continue
 
                 try:
-                    with file_path.open("r", encoding="utf-8") as f:
-                        lines = f.readlines()
+                    line_iter = _reverse_read_lines(file_path)
+                    for raw_line in line_iter:
+                        line = raw_line.strip()
+                        if not line:
+                            continue
+
+                        try:
+                            event = AuditEvent.model_validate_json(line)
+                        except Exception:
+                            continue
+
+                        if agent_id is not None and event.agent_id != agent_id:
+                            continue
+                        if role is not None and event.role != role:
+                            continue
+                        if status is not None and event.status != status:
+                            continue
+                        if since is not None:
+                            if since_dt is not None:
+                                event_dt = _parse_iso_utc(event.timestamp)
+                                if event_dt is None or event_dt < since_dt:
+                                    continue
+                            elif event.timestamp < since:
+                                continue
+
+                        results.append(event)
+                        if len(results) >= limit:
+                            return results
                 except OSError:
                     continue
 
-                for raw_line in reversed(lines):
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-
-                    try:
-                        event = AuditEvent.model_validate_json(line)
-                    except Exception:
-                        continue
-
-                    if agent_id is not None and event.agent_id != agent_id:
-                        continue
-                    if role is not None and event.role != role:
-                        continue
-                    if status is not None and event.status != status:
-                        continue
-                    if since is not None and event.timestamp < since:
-                        continue
-
-                    results.append(event)
-                    if len(results) >= limit:
-                        return results
-
         return results
+
 
 

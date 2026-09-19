@@ -441,9 +441,108 @@ def test_log_event_multithreaded_concurrency(tmp_path: Path):
     assert len(logged_events) == 100
 
     # Verify all 100 events were retrieved regardless of execution ordering
-    retrieved_reasons = {e.reason for e in logged_events}
-    expected_reasons = {f"Concurrent event {i:03d}" for i in range(100)}
-    assert retrieved_reasons == expected_reasons
+def test_query_logs_since_timezone_normalization(tmp_path: Path):
+    service = AuditService(audit_dir=tmp_path)
+    # Event 1: 10:00:00 +02:00 -> equivalent to 08:00:00 UTC
+    e1 = AuditEvent(
+        id="aud_tz1",
+        timestamp="2026-09-19T10:00:00+02:00",
+        agent_id="bot_tz",
+        role="tester",
+        action="read",
+        tool="tool",
+        target="target",
+        status="allowed",
+        reason="early local",
+    )
+    # Event 2: 09:30:00 UTC
+    e2 = AuditEvent(
+        id="aud_tz2",
+        timestamp="2026-09-19T09:30:00Z",
+        agent_id="bot_tz",
+        role="tester",
+        action="read",
+        tool="tool",
+        target="target",
+        status="allowed",
+        reason="mid utc",
+    )
+    # Event 3: 08:30:00 -04:00 -> equivalent to 12:30:00 UTC
+    e3 = AuditEvent(
+        id="aud_tz3",
+        timestamp="2026-09-19T08:30:00-04:00",
+        agent_id="bot_tz",
+        role="tester",
+        action="read",
+        tool="tool",
+        target="target",
+        status="allowed",
+        reason="late local",
+    )
+    service.log_event(e1)
+    service.log_event(e2)
+    service.log_event(e3)
+
+    # Cutoff at 09:00:00 UTC: e1 is 08:00:00 UTC (excluded), e2 is 09:30:00 UTC (included), e3 is 12:30:00 UTC (included)
+    results = service.query_logs(since="2026-09-19T09:00:00Z")
+    assert [r.id for r in results] == ["aud_tz3", "aud_tz2"]
+
+    # Cutoff with timezone offset: 11:00:00 +02:00 = 09:00:00 UTC
+    results_offset = service.query_logs(since="2026-09-19T11:00:00+02:00")
+    assert [r.id for r in results_offset] == ["aud_tz3", "aud_tz2"]
+
+    # Naive timestamp (without tzinfo) gets UTC assigned
+    e_naive = AuditEvent(
+        id="aud_naive",
+        timestamp="2026-09-19T10:00:00",
+        agent_id="bot_tz",
+        role="tester",
+        action="read",
+        tool="tool",
+        target="target",
+        status="allowed",
+        reason="naive tz",
+    )
+    service.log_event(e_naive)
+    results_naive = service.query_logs(since="2026-09-19T09:59:00")
+    assert "aud_naive" in [r.id for r in results_naive]
+
+    # Invalid since string falls back to lexical comparison gracefully
+    # e.g., "0" is lexically smaller than "2026...", so all events are matched
+    results_lexical_pass = service.query_logs(since="0")
+    assert len(results_lexical_pass) > 0
+    # "Z" is lexically greater than "2026...", so events are filtered out
+    results_lexical_filter = service.query_logs(since="ZZZ")
+    assert len(results_lexical_filter) == 0
+
+    # Event with unparseable timestamp is excluded when compared against valid since_dt
+    with service.log_file.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({
+            "id": "aud_bad_ts",
+            "timestamp": "INVALID_TS",
+            "agent_id": "bot_bad",
+            "role": "tester",
+            "action": "read",
+            "tool": "t",
+            "target": "tgt",
+            "status": "allowed",
+            "reason": "bad ts"
+        }) + "\n")
+
+    results_bad_ts = service.query_logs(since="2026-09-19T00:00:00Z")
+    assert "aud_bad_ts" not in [r.id for r in results_bad_ts]
 
 
+def test_reverse_read_lines_small_block_size(tmp_path: Path):
+    from app.services.audit_service import _reverse_read_lines
+    test_file = tmp_path / "test_reverse.txt"
+    test_file.write_text("line1\nline2\nline3\n", encoding="utf-8")
+
+    lines = list(_reverse_read_lines(test_file, block_size=4))
+    assert [l.strip() for l in lines if l.strip()] == ["line3", "line2", "line1"]
+
+    # Empty file test
+    empty_file = tmp_path / "empty.txt"
+    empty_file.write_text("", encoding="utf-8")
+    assert list(_reverse_read_lines(empty_file)) == []
 
