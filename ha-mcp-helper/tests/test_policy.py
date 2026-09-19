@@ -5,8 +5,10 @@ from app.core.policy import (
     AgentDefinition,
     PolicyConfig,
     PolicyEngine,
+    EphemeralToken,
     DEFAULT_POLICY_YAML,
 )
+
 
 def test_models_instantiation():
     role = RoleDefinition(
@@ -626,6 +628,85 @@ roles:
     # Traversal in pattern should also be rejected
     allowed, _ = engine.check_path_permission("designer", "traversal_pattern/file.yaml")
     assert allowed is False
+
+
+def test_issue_ephemeral_token(tmp_path: Path):
+    from datetime import datetime, timezone
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+
+    token_obj = engine.issue_token(agent_id="ephem_bot", role="dashboard_designer", ttl_minutes=30)
+    assert isinstance(token_obj, EphemeralToken)
+    assert token_obj.agent_id == "ephem_bot"
+    assert token_obj.role == "dashboard_designer"
+    assert token_obj.token.startswith("sec_agent_ephem_")
+    
+    # Check expiration is roughly 30 minutes in future
+    exp_dt = datetime.fromisoformat(token_obj.expires_at)
+    now_dt = datetime.now(timezone.utc)
+    diff = (exp_dt - now_dt).total_seconds()
+    assert 28 * 60 < diff <= 30 * 60
+
+    # Test resolution
+    agent_id, role = engine.resolve_principal(token_obj.token)
+    assert agent_id == "ephem_bot"
+    assert role == "dashboard_designer"
+
+
+def test_issue_token_invalid_role_raises_value_error(tmp_path: Path):
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+    with pytest.raises(ValueError, match="Role 'non_existent_role' is not defined in policies"):
+        engine.issue_token(agent_id="bot1", role="non_existent_role", ttl_minutes=60)
+
+
+def test_issue_token_invalid_ttl_raises_value_error(tmp_path: Path):
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+    with pytest.raises(ValueError, match="ttl_minutes must be between 1 and 1440"):
+        engine.issue_token(agent_id="bot1", role="admin", ttl_minutes=0)
+
+    with pytest.raises(ValueError, match="ttl_minutes must be between 1 and 1440"):
+        engine.issue_token(agent_id="bot1", role="admin", ttl_minutes=-10)
+
+    with pytest.raises(ValueError, match="ttl_minutes must be between 1 and 1440"):
+        engine.issue_token(agent_id="bot1", role="admin", ttl_minutes=1441)
+
+
+def test_ephemeral_token_expiration(tmp_path: Path):
+    from datetime import datetime, timedelta, timezone
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+
+    token_obj = engine.issue_token(agent_id="expiring_bot", role="guest", ttl_minutes=1)
+    assert token_obj.token in engine._ephemeral_tokens
+
+    # Manually expire the token by setting expires_at in the past
+    past_time = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    engine._ephemeral_tokens[token_obj.token].expires_at = past_time
+
+    # Resolving principal should fail and purge the token
+    agent_id, role = engine.resolve_principal(token_obj.token)
+    assert agent_id is None
+    assert role is None
+    assert token_obj.token not in engine._ephemeral_tokens
+
+
+def test_ephemeral_token_invalid_timestamp_or_naive(tmp_path: Path):
+    from datetime import datetime, timedelta, timezone
+    engine = PolicyEngine(config_dir=tmp_path, master_api_key="master_secret")
+
+    token_obj = engine.issue_token(agent_id="bot_naive", role="guest", ttl_minutes=5)
+
+    # Naive timestamp string (without timezone)
+    naive_future = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    engine._ephemeral_tokens[token_obj.token].expires_at = naive_future
+    agent_id, role = engine.resolve_principal(token_obj.token)
+    assert agent_id == "bot_naive"
+    assert role == "guest"
+
+    # Corrupt unparseable timestamp
+    engine._ephemeral_tokens[token_obj.token].expires_at = "corrupt-timestamp"
+    agent_id, role = engine.resolve_principal(token_obj.token)
+    assert agent_id is None
+    assert role is None
+    assert token_obj.token not in engine._ephemeral_tokens
 
 
 
