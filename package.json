@@ -4,7 +4,7 @@
     "url": "https://github.com/sserhii-tech/home-assistant-mcp.git"
   },
   "name": "ha-ai",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "Lightweight, paranoid-secure Home Assistant AI MCP Server and Addon",
   "workspaces": [

@@ -1,6 +1,6 @@
 [project]
 name = "ha-ai-addon"
-version = "0.4.0"
+version = "0.5.0"
 description = "Lightweight paranoid-secure Home Assistant AI Addon"
 readme = "README.md"
 requires-python = ">=3.11"
