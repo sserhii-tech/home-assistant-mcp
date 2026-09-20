@@ -189,35 +189,26 @@ export class AddonAdapter implements IAddonClient {
     service?: string,
     options?: { rationale?: string }
   ): Promise<void> {
-    const headers: Record<string, string> = {
-      "X-Addon-API-Key": this.apiKey,
-      "Content-Type": "application/json",
-    };
+    try {
+      const headers: Record<string, string> = {};
+      if (options?.rationale) {
+        headers["X-Agent-Rationale"] = options.rationale;
+      }
 
-    if (options?.rationale) {
-      headers["X-Agent-Rationale"] = options.rationale;
-    }
-
-    const payload = {
-      tool,
-      target,
-      domain,
-      service,
-    };
-
-    const response = await fetch(`${this.baseUrl}/api/v1/audit/authorize`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-      let errStr = response.statusText;
-      try {
-        const errJson = await response.json();
-        if (errJson.detail?.message) errStr = errJson.detail.message;
-      } catch (e) {
-        // ignore
+      await this.client.post(
+        "/api/v1/audit/authorize",
+        {
+          tool,
+          target,
+          domain,
+          service,
+        },
+        { headers }
+      );
+    } catch (err: any) {
+      let errStr = err.message;
+      if (err.response?.data?.detail?.error) {
+        errStr = err.response.data.detail.error;
       }
       throw new Error(`Authorization denied for ${tool}: ${errStr}`);
     }
