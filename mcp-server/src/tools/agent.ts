@@ -13,8 +13,9 @@ export const issueTokenSchema = {
     .number()
     .int()
     .positive()
+    .max(1440)
     .optional()
-    .describe("Time-to-live for the token in minutes"),
+    .describe("Token time-to-live in minutes (default: 60, max: 1440)"),
   rationale: z
     .string()
     .optional()
@@ -83,7 +84,7 @@ export function registerAgentTools(server: McpServer, clients: ToolClients): voi
   server.registerTool(
     "ha_agent_issue_token",
     {
-      description: "Issue a new ephemeral JWT token for delegating tasks to a subagent.",
+      description: "Issue a new ephemeral, opaque token scoped to a specific policy role.",
       inputSchema: issueTokenSchema,
     },
     async (args) => handleAgentIssueToken(clients, args as any)

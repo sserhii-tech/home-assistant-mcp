@@ -65,3 +65,48 @@ def get_audit_logs(
         total_events=len(events),
         events=events,
     )
+
+
+from pydantic import BaseModel
+
+class AuthorizeRequest(BaseModel):
+    tool: str
+    target: str = ""
+    domain: str | None = None
+    service: str | None = None
+
+@router.post("/audit/authorize", response_model=dict)
+def authorize_action(
+    req: AuthorizeRequest,
+    principal: tuple[str, str] = Depends(get_current_principal),
+    policy_engine: PolicyEngine = Depends(get_policy_engine),
+    audit_service: AuditService = Depends(get_audit_service),
+    rationale: str = Depends(get_agent_rationale),
+):
+    caller_agent_id, caller_role = principal
+    allowed, reason = policy_engine.check_tool_permission(caller_role, req.tool)
+    if allowed and req.domain and req.service:
+        allowed, reason = policy_engine.check_service_permission(caller_role, req.domain, req.service)
+
+    target_str = req.target
+    if not target_str:
+        target_str = f"{req.domain}.{req.service}" if req.domain else "unknown"
+
+    audit_service.log_event(
+        AuditEvent(
+            agent_id=caller_agent_id,
+            role=caller_role,
+            action="execute" if allowed else "denied_policy",
+            tool=req.tool,
+            target=target_str,
+            status="allowed" if allowed else "denied_policy",
+            reason=reason,
+            rationale=rationale,
+        )
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "ForbiddenByPolicy", "message": reason, "rule_violated": reason},
+        )
+    return {"allowed": True, "reason": reason}

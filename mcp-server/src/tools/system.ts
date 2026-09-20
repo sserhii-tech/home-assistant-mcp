@@ -303,6 +303,7 @@ export async function handleSystemCallService(
   args: { domain: string; service: string; service_data?: Record<string, any>; rationale?: string }
 ): Promise<McpToolResult> {
   try {
+    await clients.addonClient.authorize("ha_system_call_service", undefined, args.domain, args.service, { rationale: args.rationale });
     const res = await clients.restClient.callService(args.domain, args.service, args.service_data, { rationale: args.rationale });
     return {
       content: [

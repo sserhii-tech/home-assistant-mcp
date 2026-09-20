@@ -17,10 +17,10 @@ export const getAuditLogsSchema = {
     .describe("Filter by event status (e.g., 'allowed', 'denied_policy', 'denied_security')"),
   limit: z
     .number()
-    .int()
     .positive()
+    .max(500)
     .optional()
-    .describe("Maximum number of events to return"),
+    .describe("Maximum number of events to return (max 500)"),
   since: z
     .string()
     .optional()

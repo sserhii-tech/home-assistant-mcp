@@ -150,6 +150,7 @@ describe("MCP Tools Suite", () => {
         getAuditLogs: vi.fn().mockResolvedValue({ total_events: 1, events: [{ id: "1" }] }),
         issueAgentToken: vi.fn().mockResolvedValue({ agent_id: "a1", role: "r1", token: "tok1", expires_at: "2026" }),
         getAgentPolicies: vi.fn().mockResolvedValue({ roles: {}, agents: {} }),
+        authorize: vi.fn().mockResolvedValue(undefined),
       } as any,
 
       renderer: {
@@ -495,6 +496,48 @@ describe("MCP Tools Suite", () => {
       });
       expect(res.isError).toBe(true);
       expect(res.content[0].text).toContain("Failed to restore backup snapshot");
+    });
+  });
+
+  describe("Agent and Audit Tools", () => {
+    it("ha_agent_issue_token should request token from addonClient", async () => {
+      mockClients.addonClient.issueAgentToken.mockResolvedValueOnce({ token: "tok1", expires_at: "t" });
+      const { handleAgentIssueToken } = await import("../src/tools/agent.js");
+      const res = await handleAgentIssueToken(mockClients as any, { agent_id: "agent-1", role: "r1" } as any);
+      expect(res.isError).toBeFalsy();
+      expect(res.content[0].text).toContain("tok1");
+      expect(mockClients.addonClient.issueAgentToken).toHaveBeenCalledWith({ agent_id: "agent-1", role: "r1" });
+    });
+
+    it("ha_agent_issue_token should handle failure", async () => {
+      const { handleAgentIssueToken } = await import("../src/tools/agent.js");
+      (mockClients.addonClient.issueAgentToken as any).mockRejectedValueOnce(new Error("Denied"));
+      const res = await handleAgentIssueToken(mockClients, { agent_id: "agent-1", role: "r1" } as any);
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("Denied");
+    });
+
+    it("ha_agent_list_policies should return policies", async () => {
+      const { handleAgentListPolicies } = await import("../src/tools/agent.js");
+      const res = await handleAgentListPolicies(mockClients);
+      expect(res.isError).toBeFalsy();
+      expect(res.content[0].text).toContain("{}");
+    });
+
+    it("ha_audit_get_logs should pass filters and rationale", async () => {
+      const { handleAuditGetLogs } = await import("../src/tools/audit.js");
+      const res = await handleAuditGetLogs(mockClients, { limit: 10, rationale: "Testing" } as any);
+      expect(res.isError).toBeFalsy();
+      expect(res.content[0].text).toContain("total_events");
+      expect(mockClients.addonClient.getAuditLogs).toHaveBeenCalledWith({ limit: 10, rationale: "Testing" });
+    });
+
+    it("ha_audit_get_logs should handle failure", async () => {
+      const { handleAuditGetLogs } = await import("../src/tools/audit.js");
+      (mockClients.addonClient.getAuditLogs as any).mockRejectedValueOnce(new Error("Failed fetching audit logs"));
+      const res = await handleAuditGetLogs(mockClients, {} as any);
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain("Failed fetching audit logs");
     });
   });
 

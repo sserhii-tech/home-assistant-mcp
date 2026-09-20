@@ -73,7 +73,8 @@ Apply the updated dashboard configuration safely.
 {
   "dashboard_slug": "lovelace",
   "label": "Add living room climate tile and energy gauge",
-  "config_yaml": "title: Home\nviews:\n  - title: Main\n    path: main\n    cards:\n      - type: tile\n        entity: light.living_room\n"
+  "config_yaml": "title: Home\nviews:\n  - title: Main\n    path: main\n    cards:\n      - type: tile\n        entity: light.living_room\n",
+  "rationale": "Adding climate and energy visualizations for better visibility."
 }
 ```
 
@@ -114,7 +115,7 @@ Analyze the captured screenshot image using multimodal vision inspection:
 | :--- | :--- | :--- |
 | `ha_system_list_entities` | Discover entities & states | `domain_filter`, `search_query` |
 | `ha_dashboard_get_config` | Fetch Lovelace dashboard YAML/JSON | `dashboard_slug` |
-| `ha_dashboard_save_config` | Snapshot, validate, and write dashboard | `config_yaml`, `dashboard_slug`, `label` |
+| `ha_dashboard_save_config` | Snapshot, validate, and write dashboard | `config_yaml`, `dashboard_slug`, `label`, `rationale` |
 | `ha_dashboard_render_screenshot` | Headless Playwright visual capture | `url_path`, `device_preset`, `dark_mode`, `element_selector` |
 
 ---
@@ -125,3 +126,4 @@ Analyze the captured screenshot image using multimodal vision inspection:
 2. **Multi-Viewport Testing**: Every dashboard modification must be verified on both `desktop` and `mobile` presets before marking complete.
 3. **Graceful Entity Fallbacks**: Use conditional cards or friendly names so cards remain visually appealing even when sensors are temporarily unavailable.
 4. **Non-Destructive View Updates**: When adding new features, prefer creating dedicated views or sub-views rather than overwriting existing user dashboards without request.
+5. **Sandboxed Roles & Audit Logs**: Always provide a descriptive `rationale` parameter when saving config, as this is logged securely. If delegating to a UI subagent, invoke them with the restricted `dashboard_designer` role via `ha_agent_issue_token` to enforce scope safety.

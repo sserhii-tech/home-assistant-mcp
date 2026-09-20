@@ -228,7 +228,7 @@ Analyze the captured screenshot image using multimodal vision inspection:
 2. **Multi-Viewport Testing**: Every dashboard modification must be verified on both \`desktop\` and \`mobile\` presets before marking complete.
 3. **Graceful Entity Fallbacks**: Use conditional cards or friendly names so cards remain visually appealing even when sensors are temporarily unavailable.
 4. **Non-Destructive View Updates**: When adding new features, prefer creating dedicated views or sub-views rather than overwriting existing user dashboards without request.
-5. **Sandboxed Roles & Audit Logs**: Always provide a descriptive \`rationale\` parameter when saving config, as this is logged securely. If delegating to a UI subagent, invoke them with the restricted \`ha-dashboard-designer\` role via \`ha_agent_issue_token\` to enforce scope safety.
+5. **Sandboxed Roles & Audit Logs**: Always provide a descriptive \`rationale\` parameter when saving config, as this is logged securely. If delegating to a UI subagent, invoke them with the restricted \`dashboard_designer\` role via \`ha_agent_issue_token\` to enforce scope safety.
 `,
 
   "ha-automation-builder": `---
@@ -383,7 +383,7 @@ Validate that the newly registered automation triggers properly and executes its
 2. **Deterministic Reloading**: Never rely on full Home Assistant restarts for automation testing; use \`ha_automation_write\`'s built-in service reload.
 3. **Log Verification Gate**: Never declare an automation complete without checking \`ha_system_get_logs\` for template or service execution warnings.
 4. **Appropriate Mode Selection**: Use \`mode: restart\` for motion/timer automations and \`mode: single\` or \`mode: queued\` for security/alert automations.
-5. **Sandboxed Roles & Audit Logs**: Always provide a descriptive \`rationale\` parameter when deploying automations, as this is logged securely. If delegating to a coding subagent, invoke them with the restricted \`ha-automation-builder\` role via \`ha_agent_issue_token\` to enforce scope safety.
+5. **Sandboxed Roles & Audit Logs**: Always provide a descriptive \`rationale\` parameter when deploying automations, as this is logged securely. If delegating to a coding subagent, invoke them with the restricted \`automation_builder\` role via \`ha_agent_issue_token\` to enforce scope safety.
 `,
 
   "ha-troubleshooter": `---
@@ -494,7 +494,7 @@ After executing a rollback or applying a corrective patch, verify that the syste
 2. **Sanitized Output Awareness**: \`ha_system_get_logs\` redacts secrets; never attempt to bypass log sanitization to inspect raw credentials.
 3. **Rollback Over Patching Broken States**: When an unverified configuration breaks critical automations, roll back to the last known good snapshot before attempting redesigns.
 4. **Mandatory Post-Restore Verification**: Always verify both \`ha_system_health\` and \`ha_system_get_logs\` after any restore or configuration repair.
-5. **Sandboxed Roles & Audit Logs**: Always provide a descriptive \`rationale\` parameter when backing up or restoring configurations, as this is logged securely. If delegating to a diagnostics subagent, invoke them with the restricted \`ha-troubleshooter\` role via \`ha_agent_issue_token\` to enforce scope safety.
+5. **Sandboxed Roles & Audit Logs**: Always provide a descriptive \`rationale\` parameter when backing up or restoring configurations, as this is logged securely. If delegating to a diagnostics subagent, invoke them with the restricted \`diagnostics\` role via \`ha_agent_issue_token\` to enforce scope safety.
 `
 };
 
@@ -524,6 +524,15 @@ export function getTargetSkillsDirectories(customDir?: string): string[] {
   // If none exist, default to gemini skills path
   if (candidates.length === 0) {
     candidates.push(geminiSkills);
+  }
+
+  // Always include the local repository skills path for checked-in files
+  const __dirname = path.dirname(new URL(import.meta.url).pathname);
+  // Fix for Windows paths starting with /C:/
+  const normalizedDirname = os.platform() === 'win32' && __dirname.startsWith('/') ? __dirname.slice(1) : __dirname;
+  const localRepoSkills = path.resolve(normalizedDirname, "..", "..", "..", "skills");
+  if (fs.existsSync(localRepoSkills)) {
+    candidates.push(localRepoSkills);
   }
 
   return candidates;

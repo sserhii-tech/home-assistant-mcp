@@ -100,4 +100,15 @@ export interface IAddonClient {
   getAuditLogs(params?: AuditQueryParams): Promise<AuditQueryResponse>;
   issueAgentToken(params: IssueTokenParams): Promise<IssueTokenResponse>;
   getAgentPolicies(): Promise<PoliciesResponse>;
+  /**
+   * Request authorization from the policy engine before making direct mutations.
+   * Resolves if authorized, throws if denied by policy.
+   */
+  authorize(
+    tool: string,
+    target?: string,
+    domain?: string,
+    service?: string,
+    options?: { rationale?: string }
+  ): Promise<void>;
 }

@@ -109,6 +109,9 @@ export async function handleDashboardSaveConfig(
     try {
       const parsedJson = JSON.parse(args.config_yaml);
       if (typeof parsedJson === "object" && parsedJson !== null) {
+        await clients.addonClient.authorize("ha_dashboard_save_config", slug, undefined, undefined, {
+          rationale: args.rationale,
+        });
         await clients.wsClient.saveLovelaceConfig(parsedJson, slug === "lovelace" ? null : slug);
       }
     } catch {

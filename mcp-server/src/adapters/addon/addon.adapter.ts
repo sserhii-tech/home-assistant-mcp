@@ -181,6 +181,47 @@ export class AddonAdapter implements IAddonClient {
       throw new ClientError(`Addon getAgentPolicies failed: ${err.message}`, err.response?.status);
     }
   }
+
+  async authorize(
+    tool: string,
+    target?: string,
+    domain?: string,
+    service?: string,
+    options?: { rationale?: string }
+  ): Promise<void> {
+    const headers: Record<string, string> = {
+      "X-Addon-API-Key": this.apiKey,
+      "Content-Type": "application/json",
+    };
+
+    if (options?.rationale) {
+      headers["X-Agent-Rationale"] = options.rationale;
+    }
+
+    const payload = {
+      tool,
+      target,
+      domain,
+      service,
+    };
+
+    const response = await fetch(`${this.baseUrl}/api/v1/audit/authorize`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      let errStr = response.statusText;
+      try {
+        const errJson = await response.json();
+        if (errJson.detail?.message) errStr = errJson.detail.message;
+      } catch (e) {
+        // ignore
+      }
+      throw new Error(`Authorization denied for ${tool}: ${errStr}`);
+    }
+  }
 }
 
 // Backward-compatible alias
