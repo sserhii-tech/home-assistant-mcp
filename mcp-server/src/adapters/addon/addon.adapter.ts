@@ -103,11 +103,15 @@ export class AddonAdapter implements IAddonClient {
     }
   }
 
-  async restoreSnapshot(snapshotId: string): Promise<BackupRestoreResult> {
+  async restoreSnapshot(snapshotId: string, options?: { rationale?: string }): Promise<BackupRestoreResult> {
     try {
+      const headers: Record<string, string> = {};
+      if (options?.rationale) {
+        headers["X-Agent-Rationale"] = options.rationale;
+      }
       const resp = await this.client.post<BackupRestoreResult>("/api/v1/backup/restore", {
         snapshot_id: snapshotId,
-      });
+      }, { headers });
       return resp.data;
     } catch (err: any) {
       throw new ClientError(`Addon restoreSnapshot failed: ${err.message}`, err.response?.status);

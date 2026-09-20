@@ -95,7 +95,7 @@ export interface IAddonClient {
     options?: { validateYaml?: boolean; label?: string; rationale?: string }
   ): Promise<FileWriteResult>;
   listSnapshots(): Promise<SnapshotInfo[]>;
-  restoreSnapshot(snapshotId: string): Promise<BackupRestoreResult>;
+  restoreSnapshot(snapshotId: string, options?: { rationale?: string }): Promise<BackupRestoreResult>;
   getLogs(lines?: number): Promise<LogsTailResult>;
   getAuditLogs(params?: AuditQueryParams): Promise<AuditQueryResponse>;
   issueAgentToken(params: IssueTokenParams): Promise<IssueTokenResponse>;

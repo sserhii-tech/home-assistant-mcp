@@ -147,6 +147,9 @@ describe("MCP Tools Suite", () => {
           ],
           count: 2,
         }),
+        getAuditLogs: vi.fn().mockResolvedValue({ total_events: 1, events: [{ id: "1" }] }),
+        issueAgentToken: vi.fn().mockResolvedValue({ agent_id: "a1", role: "r1", token: "tok1", expires_at: "2026" }),
+        getAgentPolicies: vi.fn().mockResolvedValue({ roles: {}, agents: {} }),
       } as any,
 
       renderer: {
@@ -478,7 +481,8 @@ describe("MCP Tools Suite", () => {
       expect(res.isError).toBeFalsy();
       expect(res.content[0].text).toContain("Successfully restored");
       expect(mockClients.addonClient.restoreSnapshot).toHaveBeenCalledWith(
-        "snap_20260831_120000_automations_yaml"
+        "snap_20260831_120000_automations_yaml",
+        { rationale: undefined }
       );
     });
 
@@ -524,7 +528,7 @@ describe("MCP Tools Suite", () => {
       expect(server).toBeDefined();
       expect(clients).toBe(mockClients);
       const registeredTools = (server as any)._registeredTools;
-      expect(Object.keys(registeredTools).length).toBe(13);
+      expect(Object.keys(registeredTools).length).toBe(16);
     });
   });
 });

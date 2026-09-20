@@ -56,9 +56,13 @@ export class HARestAdapter implements IHARestClient {
     }
   }
 
-  async callService(domain: string, service: string, serviceData: Record<string, any> = {}): Promise<any> {
+  async callService(domain: string, service: string, serviceData: Record<string, any> = {}, options?: { rationale?: string }): Promise<any> {
     try {
-      const resp = await this.client.post(`/api/services/${domain}/${service}`, serviceData);
+      const headers: Record<string, string> = {};
+      if (options?.rationale) {
+        headers["X-Agent-Rationale"] = options.rationale;
+      }
+      const resp = await this.client.post(`/api/services/${domain}/${service}`, serviceData, { headers });
       return resp.data;
     } catch (err: any) {
       throw new ClientError(`Failed calling service ${domain}.${service}: ${err.message}`, err.response?.status);

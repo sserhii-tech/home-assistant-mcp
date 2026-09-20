@@ -14,6 +14,8 @@ import { PlaywrightDashboardAdapter } from "./adapters/browser/playwright.adapte
 import { registerDashboardTools } from "./tools/dashboard.js";
 import { registerAutomationTools } from "./tools/automation.js";
 import { registerSystemTools } from "./tools/system.js";
+import { registerAuditTools } from "./tools/audit.js";
+import { registerAgentTools } from "./tools/agent.js";
 import type { ToolClients } from "./tools/types.js";
 
 export function createClients(): ToolClients {
@@ -49,6 +51,8 @@ export function createServer(providedClients?: ToolClients): {
   registerDashboardTools(server, clients);
   registerAutomationTools(server, clients);
   registerSystemTools(server, clients);
+  registerAuditTools(server, clients);
+  registerAgentTools(server, clients);
 
   return { server, clients };
 }

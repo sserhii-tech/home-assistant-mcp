@@ -68,7 +68,8 @@ Invoke the service using \`ha_system_call_service\`.
   "service_data": {
     "entity_id": "light.office_light",
     "brightness": 200
-  }
+  },
+  "rationale": "Turning on the lights as part of the morning routine."
 }
 \`\`\`
 
@@ -85,7 +86,7 @@ Confirm that the physical device or software entity acknowledged the command and
 | Tool | Purpose | Key Parameters |
 | :--- | :--- | :--- |
 | \`ha_system_list_entities\` | Discover entities and inspect live states | \`domain_filter\`, \`search_query\` |
-| \`ha_system_call_service\` | Call any Home Assistant domain service | \`domain\`, \`service\`, \`service_data\` |
+| \`ha_system_call_service\` | Call any Home Assistant domain service | \`domain\`, \`service\`, \`service_data\`, \`rationale\` |
 | \`ha_system_get_logs\` | Inspect system error logs on failures | \`lines_count\`, \`source\` |
 | \`ha_system_health\` | Verify API and integration connectivity | *(none)* |
 
@@ -96,6 +97,7 @@ Confirm that the physical device or software entity acknowledged the command and
 1. **Verify Before Execution**: Always confirm entity identity with \`ha_system_list_entities\` before triggering destructive or high-energy actions (heaters, locks, garage doors).
 2. **Post-State Validation**: Never assume a service call succeeded solely based on HTTP 200; verify the entity \`state\` afterwards.
 3. **Graceful Error Handling**: If a device fails to respond, inspect \`ha_system_get_logs\` for Zigbee/Z-Wave/Wi-Fi timeout errors before retrying in a loop.
+4. **Sandboxed Roles & Audit Logs**: Always provide a descriptive \`rationale\` parameter when mutating state, as this is logged securely by the Audit service. Use ephemeral tokens via \`ha_agent_issue_token\` with narrow roles if delegating this task to a subagent.
 `,
 
   "ha-dashboard-designer": `---
@@ -173,7 +175,8 @@ Apply the updated dashboard configuration safely.
 {
   "dashboard_slug": "lovelace",
   "label": "Add living room climate tile and energy gauge",
-  "config_yaml": "title: Home\\nviews:\\n  - title: Main\\n    path: main\\n    cards:\\n      - type: tile\\n        entity: light.living_room\\n"
+  "config_yaml": "title: Home\\nviews:\\n  - title: Main\\n    path: main\\n    cards:\\n      - type: tile\\n        entity: light.living_room\\n",
+  "rationale": "Adding climate and energy visualizations for better visibility."
 }
 \`\`\`
 
@@ -214,7 +217,7 @@ Analyze the captured screenshot image using multimodal vision inspection:
 | :--- | :--- | :--- |
 | \`ha_system_list_entities\` | Discover entities & states | \`domain_filter\`, \`search_query\` |
 | \`ha_dashboard_get_config\` | Fetch Lovelace dashboard YAML/JSON | \`dashboard_slug\` |
-| \`ha_dashboard_save_config\` | Snapshot, validate, and write dashboard | \`config_yaml\`, \`dashboard_slug\`, \`label\` |
+| \`ha_dashboard_save_config\` | Snapshot, validate, and write dashboard | \`config_yaml\`, \`dashboard_slug\`, \`label\`, \`rationale\` |
 | \`ha_dashboard_render_screenshot\` | Headless Playwright visual capture | \`url_path\`, \`device_preset\`, \`dark_mode\`, \`element_selector\` |
 
 ---
@@ -225,6 +228,7 @@ Analyze the captured screenshot image using multimodal vision inspection:
 2. **Multi-Viewport Testing**: Every dashboard modification must be verified on both \`desktop\` and \`mobile\` presets before marking complete.
 3. **Graceful Entity Fallbacks**: Use conditional cards or friendly names so cards remain visually appealing even when sensors are temporarily unavailable.
 4. **Non-Destructive View Updates**: When adding new features, prefer creating dedicated views or sub-views rather than overwriting existing user dashboards without request.
+5. **Sandboxed Roles & Audit Logs**: Always provide a descriptive \`rationale\` parameter when saving config, as this is logged securely. If delegating to a UI subagent, invoke them with the restricted \`ha-dashboard-designer\` role via \`ha_agent_issue_token\` to enforce scope safety.
 `,
 
   "ha-automation-builder": `---
@@ -336,7 +340,8 @@ Write the automation block to \`automations.yaml\` safely.
 {
   "automation_id": "auto_hallway_motion_light",
   "label": "Add hallway nightlight motion automation",
-  "yaml_code": "- id: 'auto_hallway_motion_light'\\n  alias: 'Hallway: Motion-Activated Nightlight'\\n  mode: restart\\n  trigger:\\n    - platform: state\\n      entity_id: binary_sensor.hallway_motion\\n      to: 'on'\\n  action:\\n    - action: light.turn_on\\n      target:\\n        entity_id: light.hallway\\n"
+  "yaml_code": "- id: 'auto_hallway_motion_light'\\n  alias: 'Hallway: Motion-Activated Nightlight'\\n  mode: restart\\n  trigger:\\n    - platform: state\\n      entity_id: binary_sensor.hallway_motion\\n      to: 'on'\\n  action:\\n    - action: light.turn_on\\n      target:\\n        entity_id: light.hallway\\n",
+  "rationale": "Creating a safety light that triggers at night automatically."
 }
 \`\`\`
 
@@ -366,7 +371,7 @@ Validate that the newly registered automation triggers properly and executes its
 | \`ha_system_list_entities\` | Query entity IDs, states, attributes | \`domain_filter\`, \`search_query\` |
 | \`ha_automation_list\` | List automations, scripts, or scenes | \`domain\` |
 | \`ha_automation_read\` | Fetch YAML block of an automation | \`automation_id\` |
-| \`ha_automation_write\` | Validate, snapshot, write YAML & reload | \`automation_id\`, \`yaml_code\`, \`label\` |
+| \`ha_automation_write\` | Validate, snapshot, write YAML & reload | \`automation_id\`, \`yaml_code\`, \`label\`, \`rationale\` |
 | \`ha_automation_trigger\` | Execute automation trigger manually | \`entity_id\` |
 | \`ha_system_get_logs\` | Retrieve sanitized core log lines | \`lines_count\` |
 
@@ -378,6 +383,7 @@ Validate that the newly registered automation triggers properly and executes its
 2. **Deterministic Reloading**: Never rely on full Home Assistant restarts for automation testing; use \`ha_automation_write\`'s built-in service reload.
 3. **Log Verification Gate**: Never declare an automation complete without checking \`ha_system_get_logs\` for template or service execution warnings.
 4. **Appropriate Mode Selection**: Use \`mode: restart\` for motion/timer automations and \`mode: single\` or \`mode: queued\` for security/alert automations.
+5. **Sandboxed Roles & Audit Logs**: Always provide a descriptive \`rationale\` parameter when deploying automations, as this is logged securely. If delegating to a coding subagent, invoke them with the restricted \`ha-automation-builder\` role via \`ha_agent_issue_token\` to enforce scope safety.
 `,
 
   "ha-troubleshooter": `---
@@ -441,12 +447,14 @@ When an edit, automation change, or dashboard update leads to instability, regre
 \`\`\`json
 // Example call: ha_system_create_backup
 {
-  "label": "Pre-troubleshooting configuration checkpoint"
+  "label": "Pre-troubleshooting configuration checkpoint",
+  "rationale": "Saving state before attempting to fix syntax error in configuration.yaml"
 }
 
 // Example call: ha_system_restore_backup
 {
-  "snapshot_id": "snap_20260831_093000_automations_yaml"
+  "snapshot_id": "snap_20260831_093000_automations_yaml",
+  "rationale": "Rolling back because the new automation caused a boot loop."
 }
 \`\`\`
 
@@ -454,6 +462,7 @@ When an edit, automation change, or dashboard update leads to instability, regre
 After executing a rollback or applying a corrective patch, verify that the system has returned to full operational capacity.
 - Re-run \`ha_system_health\` to verify that API and daemon health check reports are \`ok\`.
 - Tail recent logs with \`ha_system_get_logs\` to ensure error loops and exception tracebacks have cleared.
+- Query \`ha_audit_get_logs\` to ensure no \`denied_policy\` or security alerts were triggered during the fault.
 
 \`\`\`json
 // Example call: ha_system_health
@@ -473,8 +482,9 @@ After executing a rollback or applying a corrective patch, verify that the syste
 | :--- | :--- | :--- |
 | \`ha_system_health\` | Query HA Core API & Addon daemon health | *(none)* |
 | \`ha_system_get_logs\` | Fetch sanitized tail of HA core & supervisor logs | \`lines_count\`, \`source\` |
-| \`ha_system_create_backup\` | Create named manual snapshot backup | \`label\` |
-| \`ha_system_restore_backup\` | Restore configuration from snapshot ID | \`snapshot_id\` |
+| \`ha_system_create_backup\` | Create named manual snapshot backup | \`label\`, \`rationale\` |
+| \`ha_system_restore_backup\` | Restore configuration from snapshot ID | \`snapshot_id\`, \`rationale\` |
+| \`ha_audit_get_logs\` | Query audit logs for recent system changes | \`limit\`, \`status\` |
 
 ---
 
@@ -484,6 +494,7 @@ After executing a rollback or applying a corrective patch, verify that the syste
 2. **Sanitized Output Awareness**: \`ha_system_get_logs\` redacts secrets; never attempt to bypass log sanitization to inspect raw credentials.
 3. **Rollback Over Patching Broken States**: When an unverified configuration breaks critical automations, roll back to the last known good snapshot before attempting redesigns.
 4. **Mandatory Post-Restore Verification**: Always verify both \`ha_system_health\` and \`ha_system_get_logs\` after any restore or configuration repair.
+5. **Sandboxed Roles & Audit Logs**: Always provide a descriptive \`rationale\` parameter when backing up or restoring configurations, as this is logged securely. If delegating to a diagnostics subagent, invoke them with the restricted \`ha-troubleshooter\` role via \`ha_agent_issue_token\` to enforce scope safety.
 `
 };
 

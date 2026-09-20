@@ -610,11 +610,14 @@ views:
       "ha_system_create_backup",
       "ha_system_restore_backup",
       "ha_system_call_service",
+      "ha_audit_get_logs",
+      "ha_agent_issue_token",
+      "ha_agent_list_policies",
     ];
 
     for (const toolName of expectedToolNames) {
       expect(registeredTools[toolName], `McpServer should register tool ${toolName}`).toBeDefined();
     }
-    expect(Object.keys(registeredTools).length).toBe(13);
+    expect(Object.keys(registeredTools).length).toBe(16);
   });
 });

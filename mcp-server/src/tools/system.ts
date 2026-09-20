@@ -32,12 +32,20 @@ export const createBackupSchema = {
   label: z
     .string()
     .describe("Description or label for the manual backup snapshot"),
+  rationale: z
+    .string()
+    .optional()
+    .describe("Reason for creating this backup"),
 };
 
 export const restoreBackupSchema = {
   snapshot_id: z
     .string()
     .describe("Snapshot ID to restore (e.g. 'snap_20260831_120000_configuration_yaml')"),
+  rationale: z
+    .string()
+    .optional()
+    .describe("Reason for restoring this backup"),
 };
 
 export const callServiceSchema = {
@@ -51,6 +59,10 @@ export const callServiceSchema = {
     .record(z.any())
     .optional()
     .describe("Service payload parameters (e.g. { entity_id: 'light.office_light' })"),
+  rationale: z
+    .string()
+    .optional()
+    .describe("Reason for calling this service"),
 };
 
 export async function handleSystemHealth(clients: ToolClients): Promise<McpToolResult> {
@@ -220,7 +232,7 @@ export async function handleSystemGetLogs(
 
 export async function handleSystemCreateBackup(
   clients: ToolClients,
-  args: { label: string }
+  args: { label: string; rationale?: string }
 ): Promise<McpToolResult> {
   try {
     let currentContent = "default_config:\n";
@@ -234,6 +246,7 @@ export async function handleSystemCreateBackup(
     const writeRes = await clients.addonClient.writeFile("configuration.yaml", currentContent, {
       validateYaml: false,
       label: args.label,
+      rationale: args.rationale,
     });
 
     return {
@@ -259,10 +272,10 @@ export async function handleSystemCreateBackup(
 
 export async function handleSystemRestoreBackup(
   clients: ToolClients,
-  args: { snapshot_id: string }
+  args: { snapshot_id: string; rationale?: string }
 ): Promise<McpToolResult> {
   try {
-    const res = await clients.addonClient.restoreSnapshot(args.snapshot_id);
+    const res = await clients.addonClient.restoreSnapshot(args.snapshot_id, { rationale: args.rationale });
 
     return {
       content: [
@@ -287,10 +300,10 @@ export async function handleSystemRestoreBackup(
 
 export async function handleSystemCallService(
   clients: ToolClients,
-  args: { domain: string; service: string; service_data?: Record<string, any> }
+  args: { domain: string; service: string; service_data?: Record<string, any>; rationale?: string }
 ): Promise<McpToolResult> {
   try {
-    const res = await clients.restClient.callService(args.domain, args.service, args.service_data);
+    const res = await clients.restClient.callService(args.domain, args.service, args.service_data, { rationale: args.rationale });
     return {
       content: [
         {

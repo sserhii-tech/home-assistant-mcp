@@ -26,6 +26,10 @@ export const writeAutomationSchema = {
     .string()
     .optional()
     .describe("Optional snapshot label for safety backup"),
+  rationale: z
+    .string()
+    .optional()
+    .describe("Reason for this automation change"),
 };
 
 export const triggerAutomationSchema = {
@@ -158,7 +162,7 @@ export async function handleAutomationRead(
 
 export async function handleAutomationWrite(
   clients: ToolClients,
-  args: { automation_id: string; yaml_code: string; label?: string }
+  args: { automation_id: string; yaml_code: string; label?: string; rationale?: string }
 ): Promise<McpToolResult> {
   try {
     let existingContent = "";
@@ -194,6 +198,7 @@ export async function handleAutomationWrite(
     const writeRes = await clients.addonClient.writeFile("automations.yaml", updatedYaml, {
       validateYaml: true,
       label,
+      rationale: args.rationale,
     });
 
     try {
