@@ -1,7 +1,7 @@
 name: "Home Assistant AI Helper"
 slug: "ha_ai_helper"
 description: "Lightweight and secure AI agent companion for Home Assistant"
-version: "0.3.9"
+version: "0.4.0"
 image: "ghcr.io/sserhii-tech/ha-mcp-helper-{arch}"
 arch:
   - "aarch64"

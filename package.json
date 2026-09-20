@@ -1,9 +1,10 @@
 {
   "repository": {
-    "url": "https://github.com/sserhii-tech/home-assistant-mcp"
+    "type": "git",
+    "url": "https://github.com/sserhii-tech/home-assistant-mcp.git"
   },
   "name": "ha-ai",
-  "version": "0.3.9",
+  "version": "0.4.0",
   "type": "module",
   "description": "Lightweight, paranoid-secure Home Assistant AI MCP Server and Addon",
   "workspaces": [
@@ -35,10 +36,6 @@
     "visual-feedback",
     "playwright"
   ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/sserhii-tech/home-assistant-mcp.git"
-  },
   "homepage": "https://github.com/sserhii-tech/home-assistant-mcp#readme",
   "bugs": {
     "url": "https://github.com/sserhii-tech/home-assistant-mcp/issues"

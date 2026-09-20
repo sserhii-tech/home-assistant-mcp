@@ -168,7 +168,7 @@ def test_health_endpoint_success(client, auth_headers, temp_config_dir):
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "ok"
-    assert data["version"] == "0.3.9"
+    assert data["version"] == "0.4.0"
     assert data["config_root"] == str(temp_config_dir)
     assert data["snapshots_count"] == 0
     assert isinstance(data["memory_mb"], (int, float))

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0
+- Merge pull request #10 from sserhii-tech/5-register-audit-agent-management-tools-and-update-ai-skills
+- fix: resolve typescript type check errors in authorize method
+- test: Fix test failures after audit endpoint and tool changes
+
 ## 0.3.9
 - feat(cli): add install-skills CLI command and background auto-sync
 - Merge branch 'main' of github.com:sserhii-tech/home-assistant-mcp
