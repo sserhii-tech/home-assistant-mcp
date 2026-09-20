@@ -227,3 +227,14 @@ npm --prefix mcp-server test
 # Run Python App security test suite
 uv run --directory apps/ha-mcp-helper pytest tests/
 ```
+
+### Test 4: Verify RBAC Policy & Audit Service
+```bash
+# Query the active policy roles from the daemon
+curl -X GET http://192.168.1.100:8099/api/v1/agent/policies \
+  -H "X-Addon-API-Key: your-addon-api-key"
+
+# Query the immutable JSONL audit logs
+curl -X GET http://192.168.1.100:8099/api/v1/audit/logs?limit=5 \
+  -H "X-Addon-API-Key: your-addon-api-key"
+```

@@ -42,13 +42,13 @@ flowchart TD
     subgraph HAHost["Remote Home Assistant OS Instance"]
         HACore["Home Assistant Core<br/>(REST & WebSocket APIs)"]
         Addon["AI Helper App<br/>(FastAPI / Alpine Container)"]
-        Storage["HA Filesystem (/config)<br/>- automations.yaml<br/>- ui-lovelace.yaml<br/>- .snapshots/<br/>- home-assistant.log"]
+        Storage["HA Filesystem (/config)<br/>- automations.yaml<br/>- ui-lovelace.yaml<br/>- .snapshots/<br/>- home-assistant.log<br/>- audit.jsonl"]
         
         Addon -->|"Mounts rw"| Storage
     end
 
     MCPServer <-->|"HTTPS / WSS :8123"| HACore
-    MCPServer <-->|"HTTP :8099 (X-Addon-API-Key)"| Addon
+    MCPServer <-->|"HTTP :8099 (X-Addon-API-Key / Ephemeral Token)"| Addon
     Renderer -.->|"HTTP/S (Render Web UI)"| HACore
 ```
 
@@ -63,6 +63,8 @@ flowchart TD
 | **Deny-List Protection** | File path blocking on `secrets.yaml`, `.storage/core.auth`, `*.pem`, SSH keys | Protects sensitive user credentials and tokens from being read or overwritten. |
 | **Secret Redaction** | Regex redaction filters on log streaming | Automatically sanitizes passwords, long-lived tokens, and API keys from tail logs. |
 | **Atomic Pre-Edit Snapshots** | Automated `.snapshots/` creation before writes | Guarantees safe rollback to the exact prior disk state upon syntax or runtime errors. |
+| **Role-Based Access Control** | Ephemeral token issuance with strict policy bounds (`ha_agent_list_policies`) | Restricts AI subagents to explicit tool, file, and service boundaries, limiting blast radius. |
+| **Audit Logging Service** | Append-only JSONL event logging across API endpoints (`ha_audit_get_logs`) | Provides immutable, queryable records of all AI actions, blocked attempts, and operational rationale. |
 
 ---
 
@@ -110,7 +112,7 @@ npm run version:bump 1.0.0   # explicit version target
 
 ## MCP Tools Reference
 
-The server exposes 12 specialized tools under the Model Context Protocol:
+The server exposes 15 specialized tools under the Model Context Protocol:
 
 ### 📊 Dashboard Tools
 | Tool Name | Parameters | Description |
@@ -136,6 +138,13 @@ The server exposes 12 specialized tools under the Model Context Protocol:
 | `ha_system_get_logs` | `lines_count?` (default: 100) | Retrieve the last $N$ lines of Home Assistant core logs with automatic secret redaction. |
 | `ha_system_create_backup` | `label` | Create a named manual snapshot backup in `/config/.snapshots/`. |
 | `ha_system_restore_backup` | `snapshot_id` | Atomically restore a file from a snapshot ID with safety backup preservation. |
+
+### 🔐 Security, Audit & Agent Management
+| Tool Name | Parameters | Description |
+| :--- | :--- | :--- |
+| `ha_audit_get_logs` | `agent_id?`, `role?`, `status?`, `limit?`, `since?`, `rationale?` | Query immutable JSONL audit logs for security, troubleshooting, and compliance filtering by agent, role, or status. |
+| `ha_agent_issue_token` | `agent_id`, `role`, `ttl_minutes?`, `rationale?` | Issue a short-lived ephemeral token dynamically scoped to specific RBAC role boundaries (default 60m TTL). |
+| `ha_agent_list_policies` | *(none)* | Retrieve all active RBAC agent roles, their tool permissions, path restrictions, and service whitelists. |
 
 ---
 
