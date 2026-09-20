@@ -63,6 +63,74 @@ def test_missing_api_key_returns_401(client):
     assert "detail" in res.json()
 
 
+def test_audit_authorize_allowed(client, temp_config_dir, auth_headers):
+    headers = dict(auth_headers)
+    headers["X-Agent-Rationale"] = "Testing"
+    response = client.post(
+        "/api/v1/audit/authorize",
+        headers=headers,
+        json={"tool": "ha_system_health"}
+    )
+    assert response.status_code == 200
+    assert response.json() == {"allowed": True, "reason": "Allowed by policy"}
+    
+    # Check audit log
+    audit_file = temp_config_dir / ".audit" / "audit.jsonl"
+    assert audit_file.exists()
+    content = audit_file.read_text(encoding="utf-8")
+    assert "ha_system_health" in content
+    assert "Testing" in content
+
+
+def test_audit_authorize_denied_tool(client, temp_config_dir, auth_headers):
+    # Get a token for dashboard_designer
+    res_token = client.post(
+        "/api/v1/agent/token",
+        headers=auth_headers,
+        json={"agent_id": "dash_subagent", "role": "dashboard_designer"}
+    )
+    token = res_token.json()["token"]
+    
+    # Try a tool that is not allowed for dashboard_designer
+    response = client.post(
+        "/api/v1/audit/authorize",
+        headers={"X-Addon-API-Key": token},
+        json={"tool": "ha_system_create_backup", "target": "backup_target"}
+    )
+    assert response.status_code == 403
+    assert "ForbiddenByPolicy" in response.json()["detail"]["error"]
+
+
+def test_audit_authorize_allowed_service(client, temp_config_dir, auth_headers):
+    # Admin is allowed to do anything, use admin
+    response = client.post(
+        "/api/v1/audit/authorize",
+        headers=auth_headers,
+        json={"tool": "ha_system_call_service", "domain": "light", "service": "turn_on"}
+    )
+    assert response.status_code == 200
+    assert response.json()["allowed"] is True
+
+
+def test_audit_authorize_denied_service(client, temp_config_dir, auth_headers):
+    # Give dashboard_designer a token
+    res_token = client.post(
+        "/api/v1/agent/token",
+        headers=auth_headers,
+        json={"agent_id": "dash_subagent", "role": "dashboard_designer"}
+    )
+    token = res_token.json()["token"]
+
+    # Dashboard designer does not have access to call services by default
+    response = client.post(
+        "/api/v1/audit/authorize",
+        headers={"X-Addon-API-Key": token},
+        json={"tool": "ha_system_call_service", "domain": "alarm_control_panel", "service": "disarm"}
+    )
+    assert response.status_code == 403
+    assert "ForbiddenByPolicy" in response.json()["detail"]["error"]
+
+
 def test_invalid_api_key_returns_401(client):
     """Requests with incorrect X-Addon-API-Key header must be rejected with 401."""
     res = client.get("/api/v1/health", headers={"X-Addon-API-Key": "wrong-key"})

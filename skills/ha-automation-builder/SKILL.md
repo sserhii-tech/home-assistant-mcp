@@ -107,7 +107,8 @@ Write the automation block to `automations.yaml` safely.
 {
   "automation_id": "auto_hallway_motion_light",
   "label": "Add hallway nightlight motion automation",
-  "yaml_code": "- id: 'auto_hallway_motion_light'\n  alias: 'Hallway: Motion-Activated Nightlight'\n  mode: restart\n  trigger:\n    - platform: state\n      entity_id: binary_sensor.hallway_motion\n      to: 'on'\n  action:\n    - action: light.turn_on\n      target:\n        entity_id: light.hallway\n"
+  "yaml_code": "- id: 'auto_hallway_motion_light'\n  alias: 'Hallway: Motion-Activated Nightlight'\n  mode: restart\n  trigger:\n    - platform: state\n      entity_id: binary_sensor.hallway_motion\n      to: 'on'\n  action:\n    - action: light.turn_on\n      target:\n        entity_id: light.hallway\n",
+  "rationale": "Creating a safety light that triggers at night automatically."
 }
 ```
 
@@ -137,7 +138,7 @@ Validate that the newly registered automation triggers properly and executes its
 | `ha_system_list_entities` | Query entity IDs, states, attributes | `domain_filter`, `search_query` |
 | `ha_automation_list` | List automations, scripts, or scenes | `domain` |
 | `ha_automation_read` | Fetch YAML block of an automation | `automation_id` |
-| `ha_automation_write` | Validate, snapshot, write YAML & reload | `automation_id`, `yaml_code`, `label` |
+| `ha_automation_write` | Validate, snapshot, write YAML & reload | `automation_id`, `yaml_code`, `label`, `rationale` |
 | `ha_automation_trigger` | Execute automation trigger manually | `entity_id` |
 | `ha_system_get_logs` | Retrieve sanitized core log lines | `lines_count` |
 
@@ -149,3 +150,4 @@ Validate that the newly registered automation triggers properly and executes its
 2. **Deterministic Reloading**: Never rely on full Home Assistant restarts for automation testing; use `ha_automation_write`'s built-in service reload.
 3. **Log Verification Gate**: Never declare an automation complete without checking `ha_system_get_logs` for template or service execution warnings.
 4. **Appropriate Mode Selection**: Use `mode: restart` for motion/timer automations and `mode: single` or `mode: queued` for security/alert automations.
+5. **Sandboxed Roles & Audit Logs**: Always provide a descriptive `rationale` parameter when deploying automations, as this is logged securely. If delegating to a coding subagent, invoke them with the restricted `automation_builder` role via `ha_agent_issue_token` to enforce scope safety.

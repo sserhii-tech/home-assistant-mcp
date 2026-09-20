@@ -57,7 +57,8 @@ Invoke the service using `ha_system_call_service`.
   "service_data": {
     "entity_id": "light.office_light",
     "brightness": 200
-  }
+  },
+  "rationale": "Turning on the lights as part of the morning routine."
 }
 ```
 
@@ -74,8 +75,8 @@ Confirm that the physical device or software entity acknowledged the command and
 | Tool | Purpose | Key Parameters |
 | :--- | :--- | :--- |
 | `ha_system_list_entities` | Discover entities and inspect live states | `domain_filter`, `search_query` |
-| `ha_system_call_service` | Call any Home Assistant domain service | `domain`, `service`, `service_data` |
-| `ha_system_get_logs` | Inspect system error logs on failures | `lines_count` |
+| `ha_system_call_service` | Call any Home Assistant domain service | `domain`, `service`, `service_data`, `rationale` |
+| `ha_system_get_logs` | Inspect system error logs on failures | `lines_count`, `source` |
 | `ha_system_health` | Verify API and integration connectivity | *(none)* |
 
 ---
@@ -85,3 +86,4 @@ Confirm that the physical device or software entity acknowledged the command and
 1. **Verify Before Execution**: Always confirm entity identity with `ha_system_list_entities` before triggering destructive or high-energy actions (heaters, locks, garage doors).
 2. **Post-State Validation**: Never assume a service call succeeded solely based on HTTP 200; verify the entity `state` afterwards.
 3. **Graceful Error Handling**: If a device fails to respond, inspect `ha_system_get_logs` for Zigbee/Z-Wave/Wi-Fi timeout errors before retrying in a loop.
+4. **Sandboxed Roles & Audit Logs**: Always provide a descriptive `rationale` parameter when mutating state, as this is logged securely by the Audit service. Use ephemeral tokens via `ha_agent_issue_token` with narrow roles if delegating this task to a subagent.

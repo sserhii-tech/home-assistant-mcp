@@ -35,7 +35,7 @@ Initiate diagnostics by checking the operational status of both the Home Assista
 
 ### Step 2: Tail & Analyze Sanitized Logs
 Inspect system logs to identify tracebacks, deprecation warnings, unhandled exceptions, template rendering faults, or integration connection failures.
-- Use `ha_system_get_logs` specifying `lines_count` (e.g. 50-200 lines).
+- Use `ha_system_get_logs` specifying `lines_count` (e.g. 50-200 lines) and optionally `source` (`core`, `supervisor`, `all`).
 - Note: System logs are automatically sanitized by the Addon backend to redact sensitive tokens, passwords, and authorization headers.
 - Categorize observed errors:
   - **YAML / Syntax Errors**: Invalid keys, missing indentation, or schema validation failures in `configuration.yaml`, `automations.yaml`, or dashboards.
@@ -45,7 +45,8 @@ Inspect system logs to identify tracebacks, deprecation warnings, unhandled exce
 ```json
 // Example call: ha_system_get_logs
 {
-  "lines_count": 100
+  "lines_count": 100,
+  "source": "all"
 }
 ```
 
@@ -58,12 +59,14 @@ When an edit, automation change, or dashboard update leads to instability, regre
 ```json
 // Example call: ha_system_create_backup
 {
-  "label": "Pre-troubleshooting configuration checkpoint"
+  "label": "Pre-troubleshooting configuration checkpoint",
+  "rationale": "Saving state before attempting to fix syntax error in configuration.yaml"
 }
 
 // Example call: ha_system_restore_backup
 {
-  "snapshot_id": "snap_20260831_093000_automations_yaml"
+  "snapshot_id": "snap_20260831_093000_automations_yaml",
+  "rationale": "Rolling back because the new automation caused a boot loop."
 }
 ```
 
@@ -71,6 +74,7 @@ When an edit, automation change, or dashboard update leads to instability, regre
 After executing a rollback or applying a corrective patch, verify that the system has returned to full operational capacity.
 - Re-run `ha_system_health` to verify that API and daemon health check reports are `ok`.
 - Tail recent logs with `ha_system_get_logs` to ensure error loops and exception tracebacks have cleared.
+- Query `ha_audit_get_logs` to ensure no `denied_policy` or security alerts were triggered during the fault.
 
 ```json
 // Example call: ha_system_health
@@ -89,9 +93,10 @@ After executing a rollback or applying a corrective patch, verify that the syste
 | Tool | Purpose | Key Parameters |
 | :--- | :--- | :--- |
 | `ha_system_health` | Query HA Core API & Addon daemon health | *(none)* |
-| `ha_system_get_logs` | Fetch sanitized tail of HA core logs | `lines_count` |
-| `ha_system_create_backup` | Create named manual snapshot backup | `label` |
-| `ha_system_restore_backup` | Restore configuration from snapshot ID | `snapshot_id` |
+| `ha_system_get_logs` | Fetch sanitized tail of HA core & supervisor logs | `lines_count`, `source` |
+| `ha_system_create_backup` | Create named manual snapshot backup | `label`, `rationale` |
+| `ha_system_restore_backup` | Restore configuration from snapshot ID | `snapshot_id`, `rationale` |
+| `ha_audit_get_logs` | Query audit logs for recent system changes | `limit`, `status` |
 
 ---
 
@@ -101,3 +106,4 @@ After executing a rollback or applying a corrective patch, verify that the syste
 2. **Sanitized Output Awareness**: `ha_system_get_logs` redacts secrets; never attempt to bypass log sanitization to inspect raw credentials.
 3. **Rollback Over Patching Broken States**: When an unverified configuration breaks critical automations, roll back to the last known good snapshot before attempting redesigns.
 4. **Mandatory Post-Restore Verification**: Always verify both `ha_system_health` and `ha_system_get_logs` after any restore or configuration repair.
+5. **Sandboxed Roles & Audit Logs**: Always provide a descriptive `rationale` parameter when backing up or restoring configurations, as this is logged securely. If delegating to a diagnostics subagent, invoke them with the restricted `diagnostics` role via `ha_agent_issue_token` to enforce scope safety.

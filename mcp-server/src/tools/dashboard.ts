@@ -21,6 +21,10 @@ export const saveDashboardConfigSchema = {
     .string()
     .optional()
     .describe("Optional backup/snapshot label description"),
+  rationale: z
+    .string()
+    .optional()
+    .describe("Reason for this configuration change"),
 };
 
 export const renderScreenshotSchema = {
@@ -89,7 +93,7 @@ export async function handleDashboardGetConfig(
 
 export async function handleDashboardSaveConfig(
   clients: ToolClients,
-  args: { config_yaml: string; dashboard_slug?: string; label?: string }
+  args: { config_yaml: string; dashboard_slug?: string; label?: string; rationale?: string }
 ): Promise<McpToolResult> {
   try {
     const slug = args.dashboard_slug?.trim() || "lovelace";
@@ -99,11 +103,15 @@ export async function handleDashboardSaveConfig(
     const writeRes = await clients.addonClient.writeFile(filePath, args.config_yaml, {
       validateYaml: true,
       label,
+      rationale: args.rationale,
     });
 
     try {
       const parsedJson = JSON.parse(args.config_yaml);
       if (typeof parsedJson === "object" && parsedJson !== null) {
+        await clients.addonClient.authorize("ha_dashboard_save_config", slug, undefined, undefined, {
+          rationale: args.rationale,
+        });
         await clients.wsClient.saveLovelaceConfig(parsedJson, slug === "lovelace" ? null : slug);
       }
     } catch {

@@ -103,11 +103,15 @@ export class AddonAdapter implements IAddonClient {
     }
   }
 
-  async restoreSnapshot(snapshotId: string): Promise<BackupRestoreResult> {
+  async restoreSnapshot(snapshotId: string, options?: { rationale?: string }): Promise<BackupRestoreResult> {
     try {
+      const headers: Record<string, string> = {};
+      if (options?.rationale) {
+        headers["X-Agent-Rationale"] = options.rationale;
+      }
       const resp = await this.client.post<BackupRestoreResult>("/api/v1/backup/restore", {
         snapshot_id: snapshotId,
-      });
+      }, { headers });
       return resp.data;
     } catch (err: any) {
       throw new ClientError(`Addon restoreSnapshot failed: ${err.message}`, err.response?.status);
@@ -175,6 +179,38 @@ export class AddonAdapter implements IAddonClient {
       return resp.data;
     } catch (err: any) {
       throw new ClientError(`Addon getAgentPolicies failed: ${err.message}`, err.response?.status);
+    }
+  }
+
+  async authorize(
+    tool: string,
+    target?: string,
+    domain?: string,
+    service?: string,
+    options?: { rationale?: string }
+  ): Promise<void> {
+    try {
+      const headers: Record<string, string> = {};
+      if (options?.rationale) {
+        headers["X-Agent-Rationale"] = options.rationale;
+      }
+
+      await this.client.post(
+        "/api/v1/audit/authorize",
+        {
+          tool,
+          target,
+          domain,
+          service,
+        },
+        { headers }
+      );
+    } catch (err: any) {
+      let errStr = err.message;
+      if (err.response?.data?.detail?.error) {
+        errStr = err.response.data.detail.error;
+      }
+      throw new Error(`Authorization denied for ${tool}: ${errStr}`);
     }
   }
 }

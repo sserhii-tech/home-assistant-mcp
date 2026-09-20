@@ -95,9 +95,20 @@ export interface IAddonClient {
     options?: { validateYaml?: boolean; label?: string; rationale?: string }
   ): Promise<FileWriteResult>;
   listSnapshots(): Promise<SnapshotInfo[]>;
-  restoreSnapshot(snapshotId: string): Promise<BackupRestoreResult>;
+  restoreSnapshot(snapshotId: string, options?: { rationale?: string }): Promise<BackupRestoreResult>;
   getLogs(lines?: number): Promise<LogsTailResult>;
   getAuditLogs(params?: AuditQueryParams): Promise<AuditQueryResponse>;
   issueAgentToken(params: IssueTokenParams): Promise<IssueTokenResponse>;
   getAgentPolicies(): Promise<PoliciesResponse>;
+  /**
+   * Request authorization from the policy engine before making direct mutations.
+   * Resolves if authorized, throws if denied by policy.
+   */
+  authorize(
+    tool: string,
+    target?: string,
+    domain?: string,
+    service?: string,
+    options?: { rationale?: string }
+  ): Promise<void>;
 }
