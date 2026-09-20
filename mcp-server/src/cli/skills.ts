@@ -530,9 +530,19 @@ export function getTargetSkillsDirectories(customDir?: string): string[] {
   const __dirname = path.dirname(new URL(import.meta.url).pathname);
   // Fix for Windows paths starting with /C:/
   const normalizedDirname = os.platform() === 'win32' && __dirname.startsWith('/') ? __dirname.slice(1) : __dirname;
+  
+  // When running from source/dist, this resolves to the repo root's skills folder
   const localRepoSkills = path.resolve(normalizedDirname, "..", "..", "..", "skills");
-  if (fs.existsSync(localRepoSkills)) {
+  if (fs.existsSync(localRepoSkills) && !candidates.includes(localRepoSkills)) {
     candidates.push(localRepoSkills);
+  }
+
+  // When running via npx, __dirname points to the npm cache. 
+  // If the user runs `npx ha-ai-mcp-server sync-skills` from the repo root, 
+  // we want to detect the current working directory's skills folder.
+  const cwdSkills = path.resolve(process.cwd(), "skills");
+  if (fs.existsSync(cwdSkills) && !candidates.includes(cwdSkills)) {
+    candidates.push(cwdSkills);
   }
 
   return candidates;
