@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1
+- fix: allow npx sync-skills to detect cwd skills folder
+- Merge pull request #10 from sserhii-tech/5-register-audit-agent-management-tools-and-update-ai-skills
+- fix: resolve typescript type check errors in authorize method
+
 ## 0.5.0
 - Merge pull request #10 from sserhii-tech/5-register-audit-agent-management-tools-and-update-ai-skills
 - fix: resolve typescript type check errors in authorize method
